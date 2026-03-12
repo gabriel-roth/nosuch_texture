@@ -12,6 +12,11 @@ add_executable(beads_tests
     test_grain.cpp
     test_reverb.cpp
     test_processor.cpp
+    test_click_prevention.cpp
+    test_delay.cpp
+    test_quality_modes.cpp
+    test_auto_gain.cpp
+    test_attenurandomizer.cpp
 )
 
 target_link_libraries(beads_tests PRIVATE beads_dsp Catch2::Catch2WithMain)

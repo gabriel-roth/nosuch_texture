@@ -5,7 +5,6 @@ namespace beads {
 
 void Reverb::Init(float* buffer, size_t buffer_size, float sample_rate) {
     sample_rate_ = sample_rate;
-    engine_.Init(buffer, buffer_size);
 
     amount_ = 0.0f;
     decay_ = 0.5f;
@@ -15,11 +14,43 @@ void Reverb::Init(float* buffer, size_t buffer_size, float sample_rate) {
     lfo_phase_ = 0.0f;
     lfo_increment_ = (sample_rate_ > 0.0f) ? (kLfoHz / sample_rate_) : 0.0f;
 
-    for (int i = 0; i < 4; ++i) ap_state_[i] = 0.0f;
     lp_state_l_ = 0.0f;
     lp_state_r_ = 0.0f;
     feedback_l_ = 0.0f;
     feedback_r_ = 0.0f;
+
+    // Partition the shared buffer into 12 individual delay lines.
+    // Each delay line gets its own contiguous region.
+    float* ptr = buffer;
+    size_t used = 0;
+
+    auto alloc = [&](DelayLine& dl, size_t len) {
+        if (used + len <= buffer_size) {
+            dl.Init(ptr, len);
+            ptr += len;
+            used += len;
+        } else {
+            dl.Init(nullptr, 0);
+        }
+    };
+
+    // Input diffusion allpasses
+    alloc(ap_in_1_, kApIn1Len);
+    alloc(ap_in_2_, kApIn2Len);
+    alloc(ap_in_3_, kApIn3Len);
+    alloc(ap_in_4_, kApIn4Len);
+
+    // Left tank
+    alloc(delay_l1_, kDelayL1Len + kModHeadroom);
+    alloc(ap_l1_, kApL1Len);
+    alloc(ap_l2_, kApL2Len);
+    alloc(delay_l2_, kDelayL2Len);
+
+    // Right tank
+    alloc(delay_r1_, kDelayR1Len + kModHeadroom);
+    alloc(ap_r1_, kApR1Len);
+    alloc(ap_r2_, kApR2Len);
+    alloc(delay_r2_, kDelayR2Len);
 }
 
 void Reverb::SetAmount(float amount) {
@@ -40,34 +71,29 @@ void Reverb::SetLpCutoff(float cutoff) {
 
 void Reverb::Process(float left_in, float right_in,
                      float* left_out, float* right_out) {
-    // Fast path: when the reverb is fully off, skip all processing
-    // to avoid the numerical hazard of 0.0 * infinity = NaN in the
-    // wet/dry mix at the end.
+    // Fast path: reverb fully off
     if (amount_ <= 0.0f) {
         *left_out = left_in;
         *right_out = right_in;
         return;
     }
 
-    auto c = engine_.GetContext();
-
     // Map decay knob (0-1) to feedback gain.
-    // Non-linear mapping: slow ramp then steep near 1.0 for long tails.
+    // Non-linear: slow ramp then steep near 1.0 for long tails.
     float fb = 0.2f + decay_ * 0.75f;
     if (decay_ > 0.9f) {
-        fb += (decay_ - 0.9f) * 0.5f;  // extra push near max
+        fb += (decay_ - 0.9f) * 0.5f;
     }
     fb = Clamp(fb, 0.0f, 0.9995f);
 
     // LP coefficient for feedback loop (one-pole).
-    // Higher lp_ = brighter. Warmer default than Clouds.
     float lp_coeff = lp_;
 
     // Diffusion coefficient for allpass stages
     float ap_coeff = diffusion_ * 0.75f;
 
     // ------------------------------------------------------------------
-    // LFO for modulated delay taps
+    // LFO for modulated delay taps (chorus-like effect in tank)
     // ------------------------------------------------------------------
     lfo_phase_ += lfo_increment_;
     if (lfo_phase_ >= 1.0f) lfo_phase_ -= 1.0f;
@@ -78,96 +104,79 @@ void Reverb::Process(float left_in, float right_in,
     float mod_r = kModDepth * lfo_cos;
 
     // ------------------------------------------------------------------
-    // Input diffusion (4 series allpass filters)
+    // Input diffusion: 4 series allpass filters
+    // Each has its own delay line, producing proper diffusion.
     // ------------------------------------------------------------------
     float input = (left_in + right_in) * 0.5f;
 
-    // AP1
-    float ap_read = c.Read(kApIn1);
-    float ap_out = ap_read - ap_coeff * input;
-    ap_state_[0] = input + ap_coeff * ap_out;
-    // We don't need to write these into the delay line explicitly;
-    // the engine write pointer is for the main feedback loop.
-    // Instead, chain through local state.
-    float diffused = ap_out;
-
-    // For the remaining diffusers, treat the output of each as the
-    // input to the next.  State is kept in ap_state_ for continuity.
-    //
-    // AP2
-    ap_read = c.Read(kApIn2);
-    ap_out = ap_read - ap_coeff * diffused;
-    ap_state_[1] = diffused + ap_coeff * ap_out;
-    diffused = ap_out;
-
-    // AP3
-    ap_read = c.Read(kApIn3);
-    ap_out = ap_read - ap_coeff * diffused;
-    ap_state_[2] = diffused + ap_coeff * ap_out;
-    diffused = ap_out;
-
-    // AP4
-    ap_read = c.Read(kApIn4);
-    ap_out = ap_read - ap_coeff * diffused;
-    ap_state_[3] = diffused + ap_coeff * ap_out;
-    diffused = ap_out;
+    float diffused = ProcessAllpass(ap_in_1_, input, ap_coeff);
+    diffused = ProcessAllpass(ap_in_2_, diffused, ap_coeff);
+    diffused = ProcessAllpass(ap_in_3_, diffused, ap_coeff);
+    diffused = ProcessAllpass(ap_in_4_, diffused, ap_coeff);
 
     // ------------------------------------------------------------------
-    // Feedback network (two interleaved paths, Dattorro topology)
+    // Tank: two cross-coupled feedback paths (Dattorro topology)
+    //
+    // Each path: modulated delay → allpass → allpass → LP → delay
+    // Cross-coupling: left feedback feeds right input, and vice versa.
+    // feedback_l_ and feedback_r_ carry values from the previous sample.
     // ------------------------------------------------------------------
 
     // LEFT PATH --------------------------------------------------------
-    // Read from modulated delay taps
-    float delay_l1 = c.ReadInterpolated(static_cast<float>(kDelayL1) + mod_l);
-    float delay_l2 = c.Read(kDelayL2);
+    float tank_l_in = diffused + fb * feedback_r_;
 
-    // Allpass in left path
-    float ap_l1_read = c.Read(kApL1);
-    float ap_l1 = ap_l1_read + ap_coeff * delay_l1;
-    float left_tank = delay_l1 - ap_coeff * ap_l1;
+    // Modulated delay L1: write input, read with modulation
+    delay_l1_.Write(tank_l_in);
+    float dl1_out = delay_l1_.ReadInterpolated(
+        static_cast<float>(kDelayL1Len) + mod_l);
+    delay_l1_.Advance();
 
-    float ap_l2_read = c.Read(kApL2);
-    float ap_l2 = ap_l2_read + ap_coeff * left_tank;
-    left_tank = left_tank - ap_coeff * ap_l2;
+    // Two allpass filters in left tank
+    float al1_out = ProcessAllpass(ap_l1_, dl1_out, ap_coeff);
+    float al2_out = ProcessAllpass(ap_l2_, al1_out, ap_coeff);
 
-    // One-pole LP in feedback
-    ONE_POLE(lp_state_l_, left_tank + delay_l2, lp_coeff);
-    feedback_l_ = lp_state_l_ * fb + diffused;
-    // Safety: prevent unbounded energy accumulation in the tank.
-    feedback_l_ = SoftClip(feedback_l_);
+    // One-pole LP in feedback path (frequency-dependent decay)
+    ONE_POLE(lp_state_l_, al2_out, lp_coeff);
+
+    // Feedback delay L2
+    float dl2_out = delay_l2_.Read(delay_l2_.size());
+    delay_l2_.Write(lp_state_l_);
+    delay_l2_.Advance();
+
+    // Safety: prevent unbounded energy accumulation
+    feedback_l_ = SoftClip(dl2_out);
 
     // RIGHT PATH -------------------------------------------------------
-    float delay_r1 = c.ReadInterpolated(static_cast<float>(kDelayR1) + mod_r);
-    float delay_r2 = c.Read(kDelayR2);
+    float tank_r_in = diffused + fb * feedback_l_;
 
-    float ap_r1_read = c.Read(kApR1);
-    float ap_r1 = ap_r1_read + ap_coeff * delay_r1;
-    float right_tank = delay_r1 - ap_coeff * ap_r1;
+    // Modulated delay R1
+    delay_r1_.Write(tank_r_in);
+    float dr1_out = delay_r1_.ReadInterpolated(
+        static_cast<float>(kDelayR1Len) + mod_r);
+    delay_r1_.Advance();
 
-    float ap_r2_read = c.Read(kApR2);
-    float ap_r2 = ap_r2_read + ap_coeff * right_tank;
-    right_tank = right_tank - ap_coeff * ap_r2;
+    // Two allpass filters in right tank
+    float ar1_out = ProcessAllpass(ap_r1_, dr1_out, ap_coeff);
+    float ar2_out = ProcessAllpass(ap_r2_, ar1_out, ap_coeff);
 
-    ONE_POLE(lp_state_r_, right_tank + delay_r2, lp_coeff);
-    feedback_r_ = lp_state_r_ * fb + diffused;
-    // Safety: prevent unbounded energy accumulation in the tank.
-    feedback_r_ = SoftClip(feedback_r_);
+    // One-pole LP
+    ONE_POLE(lp_state_r_, ar2_out, lp_coeff);
 
-    // ------------------------------------------------------------------
-    // Write feedback back into the delay memory
-    // ------------------------------------------------------------------
-    c.Write(feedback_l_ * 0.5f + feedback_r_ * 0.5f);
+    // Feedback delay R2
+    float dr2_out = delay_r2_.Read(delay_r2_.size());
+    delay_r2_.Write(lp_state_r_);
+    delay_r2_.Advance();
+
+    feedback_r_ = SoftClip(dr2_out);
 
     // ------------------------------------------------------------------
     // Output: tap from multiple points for decorrelated stereo
     // ------------------------------------------------------------------
-    float wet_l = delay_l1 * 0.6f + delay_r2 * 0.4f;
-    float wet_r = delay_r1 * 0.6f + delay_l2 * 0.4f;
+    float wet_l = dl1_out * 0.6f + dr2_out * 0.4f;
+    float wet_r = dr1_out * 0.6f + dl2_out * 0.4f;
 
     *left_out  = left_in  + amount_ * (wet_l - left_in);
     *right_out = right_in + amount_ * (wet_r - right_in);
-
-    engine_.Advance();
 }
 
 } // namespace beads

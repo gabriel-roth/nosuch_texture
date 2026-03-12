@@ -200,6 +200,12 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
     while (remaining > 0) {
         size_t block = std::min(remaining, kMaxBlockSize);
 
+        // Tape mode wow/flutter: compute pitch modulation for this block.
+        // The modulation is very slow (0.5Hz wow) so one value per block is fine.
+        float pitch_mod = s.quality_processor.GetPitchModulation(s.params.quality_mode);
+        s.grain_engine.SetPitchModulation(pitch_mod);
+        s.delay_engine.SetPitchModulation(pitch_mod);
+
         if (crossfading_modes) {
             // Run both engines and crossfade between them
             s.delay_engine.Process(s.params, s.delay_mode ? wet : wet_alt, block);

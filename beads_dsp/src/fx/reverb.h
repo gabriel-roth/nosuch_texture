@@ -5,16 +5,15 @@
 
 namespace beads {
 
-// Dattorro plate reverb, ported from Clouds' topology but retuned for Beads.
+// Dattorro plate reverb with proper partitioned delay lines.
 //
 // Topology:
 //   4 input allpass diffusers (pre-delay)
-//   2-path feedback loop, each path has: 2 allpass + modulated delay
-//   LP in feedback loop for frequency-dependent decay
-//   LFO modulation on delay taps (slow, subtle)
-//   Output tapped from multiple points in the feedback loop
+//   2-path cross-coupled feedback tank, each path has:
+//     modulated delay → 2 allpass → LP → delay
+//   Output tapped from multiple points in both tank paths
 //
-// Retuning for Beads (vs Clouds):
+// Retuned for Beads (vs Clouds):
 //   Delay lengths ~15% shorter (smaller room / "Thoreau's cabin" character)
 //   Warmer tone: lower LP cutoff in feedback loop
 //   Quality mode shifts reverb LP coefficient
@@ -28,54 +27,80 @@ public:
     void Process(float left_in, float right_in,
                  float* left_out, float* right_out);
 
+    // Minimum buffer size (in floats) required for Init
+    static constexpr size_t kMinBufferSize = 12000;
+
 private:
-    FxEngine engine_;
     float sample_rate_ = 48000.0f;
     float amount_ = 0.0f;
     float decay_ = 0.5f;
     float diffusion_ = 0.7f;
     float lp_ = 0.7f;
 
-    // LFO for modulation
+    // LFO for chorus-like modulation in the tank
     float lfo_phase_ = 0.0f;
     float lfo_increment_ = 0.0f;
 
-    // Diffuser state (4 input allpass filters)
-    float ap_state_[4] = {};
-
-    // Feedback loop state
-    float lp_state_l_ = 0.0f;
-    float lp_state_r_ = 0.0f;
+    // Feedback state (from previous sample, cross-coupled)
     float feedback_l_ = 0.0f;
     float feedback_r_ = 0.0f;
 
-    // -- Pre-tuned delay offsets for Beads (~15% shorter than Clouds) --
+    // LP filter state in feedback loop
+    float lp_state_l_ = 0.0f;
+    float lp_state_r_ = 0.0f;
 
-    // Input diffuser allpass delays
-    static constexpr size_t kApIn1 = 113;
-    static constexpr size_t kApIn2 = 162;
-    static constexpr size_t kApIn3 = 241;
-    static constexpr size_t kApIn4 = 399;
+    // -- 12 individual delay lines --
 
-    // Left feedback path delays
-    static constexpr size_t kDelayL1 = 1559;
-    static constexpr size_t kDelayL2 = 2656;
+    // Input diffusion allpass delay lines
+    DelayLine ap_in_1_;
+    DelayLine ap_in_2_;
+    DelayLine ap_in_3_;
+    DelayLine ap_in_4_;
 
-    // Right feedback path delays
-    static constexpr size_t kDelayR1 = 1493;
-    static constexpr size_t kDelayR2 = 2423;
+    // Left tank
+    DelayLine delay_l1_;    // Modulated delay
+    DelayLine ap_l1_;       // Tank allpass 1
+    DelayLine ap_l2_;       // Tank allpass 2
+    DelayLine delay_l2_;    // Feedback delay
 
-    // Left feedback allpass delays
-    static constexpr size_t kApL1 = 569;
-    static constexpr size_t kApL2 = 829;
+    // Right tank
+    DelayLine delay_r1_;    // Modulated delay
+    DelayLine ap_r1_;       // Tank allpass 1
+    DelayLine ap_r2_;       // Tank allpass 2
+    DelayLine delay_r2_;    // Feedback delay
 
-    // Right feedback allpass delays
-    static constexpr size_t kApR1 = 601;
-    static constexpr size_t kApR2 = 887;
+    // -- Delay lengths (samples, ~15% shorter than Clouds) --
+    static constexpr size_t kApIn1Len = 113;
+    static constexpr size_t kApIn2Len = 162;
+    static constexpr size_t kApIn3Len = 241;
+    static constexpr size_t kApIn4Len = 399;
 
-    // Modulated delay variation: +/- 16 samples at ~0.5 Hz LFO
+    static constexpr size_t kDelayL1Len = 1559;
+    static constexpr size_t kApL1Len = 569;
+    static constexpr size_t kApL2Len = 829;
+    static constexpr size_t kDelayL2Len = 2656;
+
+    static constexpr size_t kDelayR1Len = 1493;
+    static constexpr size_t kApR1Len = 601;
+    static constexpr size_t kApR2Len = 887;
+    static constexpr size_t kDelayR2Len = 2423;
+
+    // Modulated delay buffers need extra headroom for LFO variation
+    static constexpr size_t kModHeadroom = 32;
+
+    // Modulation parameters
     static constexpr float kModDepth = 16.0f;
     static constexpr float kLfoHz = 0.5f;
+
+    // Process one Schroeder allpass: read delayed, compute, write, advance.
+    // Returns the allpass output.
+    static float ProcessAllpass(DelayLine& dl, float input, float g) {
+        float delayed = dl.Read(dl.size());
+        float w = input - g * delayed;
+        dl.Write(w);
+        dl.Advance();
+        return g * w + delayed;
+    }
 };
 
 } // namespace beads

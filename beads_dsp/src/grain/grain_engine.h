@@ -20,6 +20,9 @@ public:
     void Process(const BeadsParameters& params, StereoFrame* output,
                  size_t num_frames);
 
+    // Set pitch modulation ratio (tape mode wow/flutter). 1.0 = no modulation.
+    void SetPitchModulation(float ratio) { pitch_mod_ratio_ = ratio; }
+
     int ActiveGrainCount() const;
 
 private:
@@ -36,6 +39,9 @@ private:
 
     // Overlap normalization
     float overlap_count_lp_ = 0.0f;  // Smoothed active grain count
+
+    // Tape mode wow/flutter pitch modulation (ratio, 1.0 = none)
+    float pitch_mod_ratio_ = 1.0f;
 
     // Allocate a grain from the pool (returns nullptr if full after stealing)
     Grain* AllocateGrain();

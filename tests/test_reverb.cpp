@@ -72,9 +72,10 @@ TEST_CASE("Reverb: High decay produces longer tail", "[reverb]") {
     rev_short.Process(1.0f, 1.0f, &out_l, &out_r);
     rev_long.Process(1.0f, 1.0f, &out_l, &out_r);
 
-    // Process 5000 samples of silence
+    // Process enough silence for feedback to recirculate through the tank.
+    // Total tank round-trip is ~8000+ samples, so we need significantly more.
     float energy_short = 0.0f, energy_long = 0.0f;
-    for (int i = 0; i < 5000; ++i) {
+    for (int i = 0; i < 24000; ++i) {
         rev_short.Process(0.0f, 0.0f, &out_l, &out_r);
         energy_short += out_l * out_l + out_r * out_r;
 

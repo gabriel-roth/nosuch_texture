@@ -92,7 +92,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     // --- PITCH → playback rate ---
     float mod_pitch = ar_pitch_.Process(params.pitch, params.pitch_ar,
                                          params.pitch_cv, params.pitch_cv_connected);
-    gp.pitch_ratio = SemitonesToRatio(mod_pitch);
+    gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_;
 
     // --- SHAPE → envelope shape ---
     float mod_shape = ar_shape_.Process(params.shape, params.shape_ar,

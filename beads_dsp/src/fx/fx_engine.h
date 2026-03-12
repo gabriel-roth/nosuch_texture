@@ -1,80 +1,59 @@
 #pragma once
 #include <cstddef>
 #include <cmath>
-#include "../../include/beads/types.h"
 
 namespace beads {
 
-// FxEngine manages a block of memory used as delay lines for reverb
-// Based on the Clouds fx_engine pattern
-class FxEngine {
+// Individual delay line for use in reverb and other effects.
+// Operates on a sub-region of a shared buffer.
+class DelayLine {
 public:
-    // Context provides read/write access to the engine's delay memory
-    // Used inside the reverb Process() to read/write delay taps
-    class Context {
-    public:
-        Context(float* buffer, size_t size, size_t write_ptr)
-            : buffer_(buffer), size_(size), write_ptr_(write_ptr) {}
-
-        // Write accumulator to current position with optional gain
-        void Write(float value, float scale = 1.0f) {
-            buffer_[write_ptr_] = value * scale;
-        }
-
-        // Write with interpolated position (for modulated delays)
-        void WriteAllpass(float value, float scale = 1.0f) {
-            buffer_[write_ptr_] = value * scale;
-        }
-
-        // Read from delay line at offset samples behind write pointer
-        float Read(size_t offset) const {
-            if (size_ == 0) return 0.0f;
-            size_t idx = (write_ptr_ + size_ - offset) % size_;
-            return buffer_[idx];
-        }
-
-        // Read with linear interpolation for fractional delays
-        float ReadInterpolated(float offset) const {
-            if (size_ == 0) return 0.0f;
-            // Clamp offset to valid range to prevent underflow when
-            // LFO modulation drives it negative.
-            if (offset < 0.0f) offset = 0.0f;
-            if (offset >= static_cast<float>(size_)) {
-                offset = static_cast<float>(size_ - 1);
-            }
-            float int_part;
-            float frac = std::modf(offset, &int_part);
-            size_t idx0 = (write_ptr_ + size_ - static_cast<size_t>(int_part)) % size_;
-            size_t idx1 = (idx0 + size_ - 1) % size_;
-            return buffer_[idx0] + frac * (buffer_[idx1] - buffer_[idx0]);
-        }
-
-    private:
-        float* buffer_;
-        size_t size_;
-        size_t write_ptr_;
-    };
-
     void Init(float* buffer, size_t size) {
         buffer_ = buffer;
         size_ = size;
         write_ptr_ = 0;
-        Clear();
-    }
-
-    void Clear() {
         if (buffer_) {
             for (size_t i = 0; i < size_; ++i) buffer_[i] = 0.0f;
         }
     }
 
-    Context GetContext() {
-        return Context(buffer_, size_, write_ptr_);
+    // Write value at current write position
+    void Write(float value) {
+        if (size_ == 0) return;
+        buffer_[write_ptr_] = value;
     }
 
+    // Read from offset samples behind write pointer.
+    // offset=1 gives the most recently written sample,
+    // offset=size gives the oldest sample (at write_ptr, before overwrite).
+    float Read(size_t offset) const {
+        if (size_ == 0) return 0.0f;
+        size_t idx = (write_ptr_ + size_ - (offset % size_)) % size_;
+        return buffer_[idx];
+    }
+
+    // Read with linear interpolation for fractional/modulated delays
+    float ReadInterpolated(float offset) const {
+        if (size_ == 0) return 0.0f;
+        if (offset < 1.0f) offset = 1.0f;
+        float max_off = static_cast<float>(size_);
+        if (offset > max_off) offset = max_off;
+
+        size_t off_int = static_cast<size_t>(offset);
+        float frac = offset - static_cast<float>(off_int);
+
+        float s0 = Read(off_int);
+        float s1 = Read(off_int + 1);
+        return s0 + frac * (s1 - s0);
+    }
+
+    // Advance write pointer by one position
     void Advance() {
+        if (size_ == 0) return;
         write_ptr_ = (write_ptr_ + 1) % size_;
     }
+
+    size_t size() const { return size_; }
 
 private:
     float* buffer_ = nullptr;

@@ -68,7 +68,7 @@ void DelayEngine::Process(const BeadsParameters& params,
     // ---------------------------------------------------------------
     // PITCH -> pitch shifter ratio
     // ---------------------------------------------------------------
-    float pitch_ratio = SemitonesToRatio(params.pitch);
+    float pitch_ratio = SemitonesToRatio(params.pitch) * pitch_mod_ratio_;
     pitch_shift_increment_ = pitch_ratio;
 
     // ---------------------------------------------------------------

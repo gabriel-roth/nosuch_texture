@@ -13,6 +13,9 @@ public:
 
     void Process(const BeadsParameters& params, StereoFrame* output, size_t num_frames);
 
+    // Set pitch modulation ratio (tape mode wow/flutter). 1.0 = no modulation.
+    void SetPitchModulation(float ratio) { pitch_mod_ratio_ = ratio; }
+
 private:
     float sample_rate_ = 48000.0f;
     RecordingBuffer* buffer_ = nullptr;
@@ -39,6 +42,9 @@ private:
     // Smoothing
     float smoothed_delay_time_ = 0.0f;
     float smoothed_envelope_gain_ = 1.0f;  // Smoothed slicer envelope to avoid hard edges
+
+    // Tape mode wow/flutter pitch modulation (ratio, 1.0 = none)
+    float pitch_mod_ratio_ = 1.0f;
 
     // Loop crossfade length (samples) to avoid click at loop boundary
     static constexpr int kLoopXfadeSamples = 64;
