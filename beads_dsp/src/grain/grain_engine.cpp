@@ -41,11 +41,19 @@ Grain* GrainEngine::AllocateGrain() {
         }
     }
 
-    // Pool is full — steal the first grain (oldest, since we allocate in
-    // order and the array acts as a ring).
-    // Re-init it so it's ready for a fresh start.
-    grains_[0].Init();
-    return &grains_[0];
+    // Pool is full — start fading out the oldest grain that isn't already
+    // fading.  This ensures the stolen grain's output ramps to zero
+    // (over ~32 samples) instead of cutting abruptly, which would click.
+    // We do NOT return the fading grain for immediate reuse; the new
+    // trigger is simply dropped.  The grain will become free once the
+    // fade completes.
+    for (int i = 0; i < kMaxGrains; ++i) {
+        if (!grains_[i].fading_out()) {
+            grains_[i].StartFadeOut();
+            break;
+        }
+    }
+    return nullptr;
 }
 
 Grain::GrainParameters GrainEngine::ComputeGrainParams(
@@ -103,6 +111,13 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
 
 void GrainEngine::Process(const BeadsParameters& params,
                           StereoFrame* output, size_t num_frames) {
+    if (!buffer_ || buffer_->size() == 0) {
+        for (size_t i = 0; i < num_frames; ++i) {
+            output[i] = {0.0f, 0.0f};
+        }
+        return;
+    }
+
     // --- Schedule triggers ---
     static constexpr int kMaxTriggers = 32;
     int trigger_samples[kMaxTriggers];

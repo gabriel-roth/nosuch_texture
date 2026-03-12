@@ -19,7 +19,7 @@ public:
     // cv: CV input value (volts)
     // cv_connected: whether a CV cable is patched
     float Process(float base, float ar_amount, float cv, bool cv_connected) {
-        if (ar_amount == 0.0f) return base;
+        if (ar_amount == 0.0f || !random_) return base;
 
         float modulation = 0.0f;
 

@@ -20,8 +20,13 @@ void AutoGain::Init(float sample_rate) {
 }
 
 StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db) {
-    // Peak detection: take the max of left and right absolute values
-    float peak = std::max(std::abs(input.l), std::abs(input.r));
+    // Peak detection: take the max of left and right absolute values.
+    // Guard against NaN input so the envelope follower doesn't latch to NaN.
+    float abs_l = std::abs(input.l);
+    float abs_r = std::abs(input.r);
+    if (std::isnan(abs_l)) abs_l = 0.0f;
+    if (std::isnan(abs_r)) abs_r = 0.0f;
+    float peak = std::max(abs_l, abs_r);
 
     // Envelope follower: fast attack, slow release
     if (peak > envelope_) {
@@ -37,10 +42,9 @@ StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db) {
         gain_db = Clamp(manual_gain_db, kMinGainDb, kMaxGainDb);
     } else {
         // Auto-gain mode: lower input level -> higher gain, up to +32dB
-        // target_gain_db = kMaxGainDb - GainToDb(envelope)
-        // The quieter the input, the more gain we add.
+        // Make up the difference between current level and 0dBFS.
         float input_db = GainToDb(envelope_);
-        gain_db = Clamp(kMaxGainDb - input_db, kMinGainDb, kMaxGainDb);
+        gain_db = Clamp(-input_db, kMinGainDb, kMaxGainDb);
     }
 
     target_gain_ = DbToGain(gain_db);

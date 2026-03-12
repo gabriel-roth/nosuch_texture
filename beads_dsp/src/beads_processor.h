@@ -46,6 +46,19 @@ struct BeadsProcessor::Impl {
     // Delay mode flag
     bool delay_mode = false;
 
+    // Crossfade between grain and delay engines when mode switches
+    static constexpr int kModeXfadeSamples = 64;
+    int mode_xfade_counter = 0;       // counts down from kModeXfadeSamples
+    bool prev_delay_mode = false;
+
+    // Smoothed mix parameters (zipper noise prevention)
+    float smoothed_dry_wet = 0.5f;
+    float smoothed_feedback = 0.0f;
+
+    // Wavetable fade-in/out
+    static constexpr int kWavetableXfadeSamples = 256;
+    float wavetable_fade = 0.0f;      // 0 = inactive, 1 = fully active
+
     static constexpr size_t kAlignment = 16;
 };
 

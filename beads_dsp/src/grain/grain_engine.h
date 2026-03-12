@@ -23,8 +23,6 @@ public:
     int ActiveGrainCount() const;
 
 private:
-    static constexpr int kMaxGrains = 30;
-
     Grain grains_[kMaxGrains];
     GrainScheduler scheduler_;
     Attenurandomizer ar_time_;

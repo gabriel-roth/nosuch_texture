@@ -22,14 +22,23 @@ public:
     // Trigger a new grain
     void Start(const GrainParameters& params);
 
+    // Begin a short fade-out for grain stealing (avoids click)
+    void StartFadeOut();
+
     // Process one sample, reading from the recording buffer
     // Returns true if grain is still active
     bool Process(const RecordingBuffer& buffer, float* out_l, float* out_r);
 
     bool active() const { return active_; }
+    bool fading_out() const { return fading_out_; }
 
 private:
     bool active_ = false;
+    bool fading_out_ = false;
+
+    // Fade-out for grain stealing
+    static constexpr int kStealFadeSamples = 32;
+    int steal_fade_counter_ = 0;
 
     // Read position (fractional for sub-sample accuracy)
     float read_position_ = 0.0f;

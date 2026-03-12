@@ -8,7 +8,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(beads_tests
-    test_main.cpp
     test_buffer.cpp
     test_grain.cpp
     test_reverb.cpp

@@ -66,6 +66,13 @@ private:
 
     // Tape hiss level (subtle)
     static constexpr float kTapeHissLevel = 0.001f;
+
+    // Quality mode transition: crossfade between old and new mode output
+    QualityMode prev_input_mode_ = QualityMode::kHiFi;
+    QualityMode prev_output_mode_ = QualityMode::kHiFi;
+    static constexpr int kModeXfadeSamples = 64;
+    int input_xfade_counter_ = 0;
+    int output_xfade_counter_ = 0;
 };
 
 } // namespace beads

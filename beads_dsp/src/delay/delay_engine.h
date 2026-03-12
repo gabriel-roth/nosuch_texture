@@ -19,7 +19,6 @@ private:
 
     // Primary delay read position
     float read_position_ = 0.0f;
-    float delay_time_samples_ = 0.0f;
     float delay_time_target_ = 0.0f;
 
     // Secondary tap (golden ratio of primary)
@@ -39,9 +38,10 @@ private:
 
     // Smoothing
     float smoothed_delay_time_ = 0.0f;
+    float smoothed_envelope_gain_ = 1.0f;  // Smoothed slicer envelope to avoid hard edges
 
-    // One-pole for smooth parameter changes
-    float SlerpDelay(float target, float current, float coefficient);
+    // Loop crossfade length (samples) to avoid click at loop boundary
+    static constexpr int kLoopXfadeSamples = 64;
 };
 
 } // namespace beads

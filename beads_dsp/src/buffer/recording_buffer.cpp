@@ -26,6 +26,8 @@ void RecordingBuffer::Init(float* buffer, size_t num_frames, int num_channels) {
 // ---------------------------------------------------------------------------
 
 void RecordingBuffer::Write(float left, float right) {
+    if (size_ == 0 || !buffer_ || channels_ < 2) return;
+
     size_t idx = write_head_ * channels_;
     buffer_[idx] = left;
     buffer_[idx + 1] = right;
@@ -68,11 +70,15 @@ void RecordingBuffer::UpdateTail() {
 // ---------------------------------------------------------------------------
 
 float RecordingBuffer::ReadHermite(int channel, float position) const {
-    // Wrap position into [0, size_).
-    while (position < 0.0f) position += static_cast<float>(size_);
-    while (position >= static_cast<float>(size_)) {
-        position -= static_cast<float>(size_);
-    }
+    if (size_ == 0 || !buffer_) return 0.0f;
+
+    // Guard against NaN (which would cause infinite loops below).
+    if (std::isnan(position)) return 0.0f;
+
+    // Wrap position into [0, size_) using fmod for safety.
+    float size_f = static_cast<float>(size_);
+    position = std::fmod(position, size_f);
+    if (position < 0.0f) position += size_f;
 
     // Integer and fractional parts.
     int pos_int = static_cast<int>(position);
@@ -108,11 +114,15 @@ float RecordingBuffer::ReadHermite(int channel, float position) const {
 // ---------------------------------------------------------------------------
 
 float RecordingBuffer::ReadLinear(int channel, float position) const {
-    // Wrap position into [0, size_).
-    while (position < 0.0f) position += static_cast<float>(size_);
-    while (position >= static_cast<float>(size_)) {
-        position -= static_cast<float>(size_);
-    }
+    if (size_ == 0 || !buffer_) return 0.0f;
+
+    // Guard against NaN (which would cause infinite loops below).
+    if (std::isnan(position)) return 0.0f;
+
+    // Wrap position into [0, size_) using fmod for safety.
+    float size_f = static_cast<float>(size_);
+    position = std::fmod(position, size_f);
+    if (position < 0.0f) position += size_f;
 
     int pos_int = static_cast<int>(position);
     float frac = position - static_cast<float>(pos_int);
@@ -139,7 +149,7 @@ void RecordingBuffer::StartFreezeCrossfade() {
 }
 
 void RecordingBuffer::ProcessFreezeCrossfade() {
-    if (!crossfading_) return;
+    if (!crossfading_ || size_ == 0 || !buffer_) return;
 
     // Apply a short linear fade at the current write head to smooth the
     // transition.  Each call attenuates the sample at (write_head_ - counter)
@@ -155,7 +165,9 @@ void RecordingBuffer::ProcessFreezeCrossfade() {
         // but we step backwards from the freeze point one sample at a time.
         int offset = kCrossfadeSamples - crossfade_counter_;
         int frame = static_cast<int>(write_head_) - 1 - offset;
-        if (frame < 0) frame += static_cast<int>(size_);
+        int size_int = static_cast<int>(size_);
+        // Use modular wrap that handles frame being multiple buffer-lengths negative
+        frame = ((frame % size_int) + size_int) % size_int;
 
         size_t idx = static_cast<size_t>(frame) * channels_;
         for (int c = 0; c < channels_; ++c) {

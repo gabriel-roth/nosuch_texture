@@ -13,7 +13,7 @@ void Reverb::Init(float* buffer, size_t buffer_size, float sample_rate) {
     lp_ = 0.7f;
 
     lfo_phase_ = 0.0f;
-    lfo_increment_ = kLfoHz / sample_rate_;
+    lfo_increment_ = (sample_rate_ > 0.0f) ? (kLfoHz / sample_rate_) : 0.0f;
 
     for (int i = 0; i < 4; ++i) ap_state_[i] = 0.0f;
     lp_state_l_ = 0.0f;
@@ -40,6 +40,15 @@ void Reverb::SetLpCutoff(float cutoff) {
 
 void Reverb::Process(float left_in, float right_in,
                      float* left_out, float* right_out) {
+    // Fast path: when the reverb is fully off, skip all processing
+    // to avoid the numerical hazard of 0.0 * infinity = NaN in the
+    // wet/dry mix at the end.
+    if (amount_ <= 0.0f) {
+        *left_out = left_in;
+        *right_out = right_in;
+        return;
+    }
+
     auto c = engine_.GetContext();
 
     // Map decay knob (0-1) to feedback gain.
@@ -124,6 +133,8 @@ void Reverb::Process(float left_in, float right_in,
     // One-pole LP in feedback
     ONE_POLE(lp_state_l_, left_tank + delay_l2, lp_coeff);
     feedback_l_ = lp_state_l_ * fb + diffused;
+    // Safety: prevent unbounded energy accumulation in the tank.
+    feedback_l_ = SoftClip(feedback_l_);
 
     // RIGHT PATH -------------------------------------------------------
     float delay_r1 = c.ReadInterpolated(static_cast<float>(kDelayR1) + mod_r);
@@ -139,6 +150,8 @@ void Reverb::Process(float left_in, float right_in,
 
     ONE_POLE(lp_state_r_, right_tank + delay_r2, lp_coeff);
     feedback_r_ = lp_state_r_ * fb + diffused;
+    // Safety: prevent unbounded energy accumulation in the tank.
+    feedback_r_ = SoftClip(feedback_r_);
 
     // ------------------------------------------------------------------
     // Write feedback back into the delay memory

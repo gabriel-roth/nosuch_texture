@@ -28,12 +28,20 @@ public:
 
         // Read from delay line at offset samples behind write pointer
         float Read(size_t offset) const {
+            if (size_ == 0) return 0.0f;
             size_t idx = (write_ptr_ + size_ - offset) % size_;
             return buffer_[idx];
         }
 
         // Read with linear interpolation for fractional delays
         float ReadInterpolated(float offset) const {
+            if (size_ == 0) return 0.0f;
+            // Clamp offset to valid range to prevent underflow when
+            // LFO modulation drives it negative.
+            if (offset < 0.0f) offset = 0.0f;
+            if (offset >= static_cast<float>(size_)) {
+                offset = static_cast<float>(size_ - 1);
+            }
             float int_part;
             float frac = std::modf(offset, &int_part);
             size_t idx0 = (write_ptr_ + size_ - static_cast<size_t>(int_part)) % size_;

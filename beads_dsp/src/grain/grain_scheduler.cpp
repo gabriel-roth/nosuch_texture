@@ -53,20 +53,19 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
 
                 if (use_random) {
                     // For density > 0.5, use exponential distribution to
-                    // randomize the interval. Reset phase to a random offset
-                    // so the next trigger is at a random time.
-                    float rand_interval = random_.NextExponential();
-                    // Scale so the average interval matches the rate.
-                    latched_phase_ = -rand_interval + 1.0f;
-                    latched_phase_ = Clamp(latched_phase_, 0.0f, 0.99f);
-                    latched_phase_ = 0.0f;
-                    // Adjust phase_inc for next trigger: multiply by random
-                    // factor so the average rate is preserved.
-                    // Actually, the simplest correct approach: set the phasor
-                    // to a random position so the next wrap happens after a
-                    // random interval with the right average.
-                    latched_phase_ = 1.0f - random_.NextExponential();
-                    if (latched_phase_ < 0.0f) latched_phase_ = 0.0f;
+                    // randomize the interval.  Set the phasor so the next
+                    // wrap happens after a random interval whose *average*
+                    // equals the deterministic period (1 / rate).
+                    //
+                    // NextExponential() returns -ln(U) with mean 1.0.
+                    // We want the next trigger after (1/rate) * random_factor
+                    // samples on average.  Expressing that in phase units:
+                    // phase_remaining = phase_inc * (1/rate) * exp_random
+                    //                 = 1.0 * exp_random
+                    // So we set latched_phase_ = 1.0 - exp_random, clamped
+                    // so it stays in a reasonable range (don't wait forever).
+                    float exp_rand = random_.NextExponential();
+                    latched_phase_ = Clamp(1.0f - exp_rand, -2.0f, 0.99f);
                 }
             }
         }
@@ -132,7 +131,13 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
     case TriggerMode::kClocked: {
         bool clock = params.gate;
         bool rising_edge = clock && !prev_clock_;
-        samples_since_clock_ += static_cast<uint32_t>(block_size);
+        // Cap the counter to prevent uint32_t overflow after very long
+        // periods without a clock edge (~24h at 48kHz).  10 seconds of
+        // samples is already far beyond any musical clock period.
+        uint32_t max_samples = static_cast<uint32_t>(sample_rate_ * 10.0f);
+        if (samples_since_clock_ < max_samples) {
+            samples_since_clock_ += static_cast<uint32_t>(block_size);
+        }
 
         if (rising_edge) {
             // Measure period between clock edges.
@@ -155,6 +160,8 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
 
                 // Use a simple counter to divide.
                 // We repurpose gate_phase_ as a clock-division counter.
+                // Increment first, then check: the first clock starts at 1
+                // and triggers when counter reaches the division value.
                 gate_phase_ += 1.0f;
                 if (static_cast<int>(gate_phase_) >= division) {
                     gate_phase_ = 0.0f;
@@ -162,6 +169,12 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
                         trigger_samples[trigger_count++] = 0;
                     }
                 }
+                // Note: for division=1, every clock triggers (1 >= 1).
+                // For division=2, every other clock triggers (1 < 2, 2 >= 2).
+                // This means the first clock after init (gate_phase_ starts
+                // at 0) triggers for division=1 but is delayed by one for
+                // division>=2.  This matches typical clock divider behavior
+                // where the first output aligns with the Nth input clock.
             } else if (params.density > 0.5f) {
                 // CW from noon: probability trigger.
                 // Map 0.5 → 0%, 1.0 → 100%

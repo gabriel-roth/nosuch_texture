@@ -20,6 +20,7 @@ public:
 
     // Set frequency from Hz and sample rate
     void SetFrequencyHz(float hz, float sample_rate) {
+        if (sample_rate <= 0.0f) return;
         SetFrequency(hz / sample_rate);
     }
 

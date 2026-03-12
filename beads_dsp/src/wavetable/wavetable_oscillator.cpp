@@ -35,7 +35,11 @@ void WavetableOscillator::Process(float pitch_semitones, float bank_select,
     // frequency = base_freq * SemitonesToRatio(pitch_semitones)
     // ---------------------------------------------------------------
     constexpr float kBaseFreq = 261.63f;  // Middle C
-    float frequency = kBaseFreq * SemitonesToRatio(pitch_semitones);
+    // Clamp pitch to a sane range to prevent extreme frequencies that
+    // could cause the phase wrapping loops below to run for billions of
+    // iterations (or produce inf/NaN).
+    float clamped_pitch = Clamp(pitch_semitones, -120.0f, 120.0f);
+    float frequency = kBaseFreq * SemitonesToRatio(clamped_pitch);
     // phase_increment is how much of the wavetable we advance per sample
     // One full cycle = kWavetableSize entries
     phase_increment_ = frequency / sample_rate_ * static_cast<float>(kWavetableSize);
@@ -107,10 +111,12 @@ void WavetableOscillator::Process(float pitch_semitones, float bank_select,
 
         // Advance phase
         phase_ += phase_increment_;
-        // Wrap phase to avoid float precision loss over time
-        while (phase_ >= static_cast<float>(kWavetableSize)) {
-            phase_ -= static_cast<float>(kWavetableSize);
-        }
+        // Wrap phase to avoid float precision loss over time.
+        // Use fmod instead of while loops to avoid unbounded iteration
+        // if phase_increment_ is very large.
+        float table_size_f = static_cast<float>(kWavetableSize);
+        phase_ = std::fmod(phase_, table_size_f);
+        if (phase_ < 0.0f) phase_ += table_size_f;
     }
 }
 
@@ -121,11 +127,9 @@ bool WavetableOscillator::ShouldActivate(const StereoFrame* input, size_t num_fr
         float peak = std::max(std::abs(input[i].l), std::abs(input[i].r));
 
         if (peak > kSilenceThreshold) {
-            // Signal detected: reset silence counter and deactivate
+            // Signal detected: reset silence counter and deactivate.
             silence_counter_ = 0.0f;
-            if (active_) {
-                active_ = false;
-            }
+            active_ = false;
         } else {
             // Below threshold: accumulate silence duration
             silence_counter_ += 1.0f;
