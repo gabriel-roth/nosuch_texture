@@ -82,7 +82,9 @@ enum {
     kParamFreezeCvIn,
     kParamGateCvIn,
     kParamMacroCvIn,
-    kParamMacroCvTarget,
+    kParamMacroFeedback,
+    kParamMacroDryWet,
+    kParamMacroReverb,
 
     // Primary controls
     kParamTime,
@@ -119,7 +121,7 @@ enum {
 static const char* const freezeStrings[] = { "Off", "On", NULL };
 static const char* const triggerStrings[] = { "Latched", "Gated", "Clocked", NULL };
 static const char* const qualityStrings[] = { "HiFi", "Clouds", "Clean LoFi", "Tape", NULL };
-static const char* const macroCvTargetStrings[] = { "Feedback", "Dry/Wet", "Reverb", NULL };
+
 static const char* const stereoInputStrings[] = { "Mono", "Stereo", NULL };
 
 // ============================================================================
@@ -142,11 +144,13 @@ static const _NT_parameter parameters[] = {
     NT_PARAMETER_CV_INPUT( "Freeze gate", 0, 0 )
     NT_PARAMETER_CV_INPUT( "Seed gate", 0, 0 )
     NT_PARAMETER_CV_INPUT( "Macro CV", 0, 0 )
-    { .name = "Macro target", .min = 0, .max = 2, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = macroCvTargetStrings },
+    { .name = "Macro>Fdbk", .min = 0, .max = 100, .def = 0, .unit = kNT_unitPercent, .scaling = 0, .enumStrings = NULL },
+    { .name = "Macro>D/W",  .min = 0, .max = 100, .def = 0, .unit = kNT_unitPercent, .scaling = 0, .enumStrings = NULL },
+    { .name = "Macro>Verb", .min = 0, .max = 100, .def = 0, .unit = kNT_unitPercent, .scaling = 0, .enumStrings = NULL },
 
     // Primary controls
     { .name = "Time",    .min = 0, .max = 1000, .def = 500, .unit = kNT_unitNone, .scaling = kNT_scaling1000, .enumStrings = NULL },
-    { .name = "Size",    .min = 0, .max = 1000, .def = 500, .unit = kNT_unitNone, .scaling = kNT_scaling1000, .enumStrings = NULL },
+    { .name = "Size",    .min = -1000, .max = 1000, .def = 0, .unit = kNT_unitNone, .scaling = kNT_scaling1000, .enumStrings = NULL },
     { .name = "Shape",   .min = 0, .max = 1000, .def = 500, .unit = kNT_unitNone, .scaling = kNT_scaling1000, .enumStrings = NULL },
     { .name = "Pitch",   .min = -2400, .max = 2400, .def = 0, .unit = kNT_unitCents, .scaling = 0, .enumStrings = NULL },
     { .name = "Density", .min = 0, .max = 1000, .def = 500, .unit = kNT_unitNone, .scaling = kNT_scaling1000, .enumStrings = NULL },
@@ -175,7 +179,7 @@ static const _NT_parameter parameters[] = {
 // ============================================================================
 
 static const uint8_t pageGrain[] = { kParamTime, kParamSize, kParamShape, kParamPitch, kParamDensity };
-static const uint8_t pageMix[] = { kParamFeedback, kParamDryWet, kParamReverb };
+static const uint8_t pageMix[] = { kParamFeedback, kParamDryWet, kParamReverb, kParamMacroFeedback, kParamMacroDryWet, kParamMacroReverb };
 static const uint8_t pageAR[] = { kParamTimeAR, kParamSizeAR, kParamShapeAR, kParamPitchAR };
 static const uint8_t pageMode[] = { kParamFreeze, kParamTriggerMode, kParamQualityMode, kParamInputGain, kParamStereoInput };
 static const uint8_t pageRouting[] = {
@@ -183,7 +187,7 @@ static const uint8_t pageRouting[] = {
     kParamOutputR, kParamOutputRMode,
     kParamTimeCvIn, kParamSizeCvIn, kParamShapeCvIn, kParamPitchCvIn,
     kParamDensityCvIn, kParamFreezeCvIn, kParamGateCvIn,
-    kParamMacroCvIn, kParamMacroCvTarget
+    kParamMacroCvIn
 };
 
 static const _NT_parameterPage pages[] = {
@@ -406,11 +410,10 @@ static void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
     p.dry_wet = v[kParamDryWet] / 100.0f;
     p.reverb = v[kParamReverb] / 100.0f;
 
-    // Apply macro CV to target
-    int macroTarget = v[kParamMacroCvTarget];
-    if (macroTarget == 0) p.feedback = clampf(p.feedback + macroCv, 0.0f, 1.0f);
-    else if (macroTarget == 1) p.dry_wet = clampf(p.dry_wet + macroCv, 0.0f, 1.0f);
-    else p.reverb = clampf(p.reverb + macroCv, 0.0f, 1.0f);
+    // Apply macro CV to all three mix parameters simultaneously
+    p.feedback = clampf(p.feedback + macroCv * (v[kParamMacroFeedback] / 100.0f), 0.0f, 1.0f);
+    p.dry_wet  = clampf(p.dry_wet  + macroCv * (v[kParamMacroDryWet]  / 100.0f), 0.0f, 1.0f);
+    p.reverb   = clampf(p.reverb   + macroCv * (v[kParamMacroReverb]  / 100.0f), 0.0f, 1.0f);
 
     p.time_ar = v[kParamTimeAR] / 100.0f;
     p.size_ar = v[kParamSizeAR] / 100.0f;
@@ -515,7 +518,9 @@ static void customUi(_NT_algorithm* self, const _NT_uiData& data) {
     }
     if (data.controls & kNT_potC) {
         float t = processPotDelta(&alg->potState, 1, data.pots[1]);
-        NT_setParameterFromUi(algIdx, kParamSize + paramOff, (int)(t * 1000.0f + 0.5f));
+        // Bipolar: pot 0.0 → -1000 (long reverse), 0.5 → 0 (short), 1.0 → +1000 (long/delay)
+        int val = (int)(t * 2000.0f - 1000.0f + 0.5f);
+        NT_setParameterFromUi(algIdx, kParamSize + paramOff, clampi(val, -1000, 1000));
     }
     if (data.controls & kNT_potR) {
         float t = processPotDelta(&alg->potState, 2, data.pots[2]);
@@ -540,7 +545,7 @@ static void customUi(_NT_algorithm* self, const _NT_uiData& data) {
         alg->potState.target[0] = 0.5f;
     }
     if ((data.controls & kNT_potButtonC) && !(data.lastButtons & kNT_potButtonC)) {
-        NT_setParameterFromUi(algIdx, kParamSize + paramOff, 500);
+        NT_setParameterFromUi(algIdx, kParamSize + paramOff, 0);
         alg->potState.target[1] = 0.5f;
     }
     if ((data.controls & kNT_potButtonR) && !(data.lastButtons & kNT_potButtonR)) {
@@ -558,7 +563,7 @@ static void setupUi(_NT_algorithm* self, _NT_float3& pots) {
 
     // Pots always map to Time/Size/Shape
     pots[0] = alg->v[kParamTime] / 1000.0f;
-    pots[1] = alg->v[kParamSize] / 1000.0f;
+    pots[1] = (alg->v[kParamSize] + 1000) / 2000.0f;  // -1000..+1000 → 0..1
     pots[2] = alg->v[kParamShape] / 1000.0f;
 
     // Initialize soft takeover targets from current pot positions
@@ -631,7 +636,7 @@ static bool draw(_NT_algorithm* self) {
     // Always show Time/Size/Shape bar graphs (pot-controlled params)
     float potValues[3] = {
         v[kParamTime] / 1000.0f,
-        v[kParamSize] / 1000.0f,
+        (v[kParamSize] + 1000) / 2000.0f,  // bipolar: -1000..+1000 → 0..1
         v[kParamShape] / 1000.0f,
     };
 

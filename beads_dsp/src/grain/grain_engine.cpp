@@ -60,18 +60,23 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
         const BeadsParameters& params, int pre_delay) {
     Grain::GrainParameters gp;
 
-    // --- SIZE → grain duration in samples ---
-    // 0.0 → ~10ms, 0.5 → ~500ms, approaching 1.0 → up to 4s buffer
-    // (At SIZE==1.0 exactly, the processor switches to delay mode, so
+    // --- SIZE → grain duration + direction ---
+    // Negative size = reverse grain playback.
+    //   -1.0 → long reverse grains, approaching 0 → short grains.
+    // Positive size = forward grain playback.
+    //   0.0 → short grains, ~0.95 → long grains, 1.0 → delay mode.
+    // (At SIZE >= 1.0 the processor switches to delay mode, so
     // we don't need to handle that case here.)
     float mod_size = ar_size_.Process(params.size, params.size_ar,
                                        params.size_cv, params.size_cv_connected);
-    mod_size = Clamp(mod_size, 0.0f, 0.999f);
+    bool reverse = (mod_size < 0.0f);
+    float abs_size = std::fabs(mod_size);
+    abs_size = Clamp(abs_size, 0.0f, 0.999f);
 
     // Exponential mapping from 0..1 to 10ms..4s
     float min_dur = 0.01f;   // 10ms
     float max_dur = kDefaultBufferDuration;  // 4s
-    float duration = min_dur * std::pow(max_dur / min_dur, mod_size);
+    float duration = min_dur * std::pow(max_dur / min_dur, abs_size);
     gp.size = duration * sample_rate_;
 
     // --- TIME → buffer read position ---
@@ -93,6 +98,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     float mod_pitch = ar_pitch_.Process(params.pitch, params.pitch_ar,
                                          params.pitch_cv, params.pitch_cv_connected);
     gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_;
+    if (reverse) gp.pitch_ratio = -gp.pitch_ratio;
 
     // --- SHAPE → envelope shape ---
     float mod_shape = ar_shape_.Process(params.shape, params.shape_ar,
