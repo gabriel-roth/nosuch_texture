@@ -1,0 +1,187 @@
+#include "recording_buffer.h"
+#include "../util/interpolation.h"
+#include "../util/dsp_utils.h"
+
+#include <cmath>
+#include <cstring>
+
+namespace beads {
+
+void RecordingBuffer::Init(float* buffer, size_t num_frames, int num_channels) {
+    buffer_ = buffer;
+    size_ = num_frames;
+    channels_ = num_channels;
+    write_head_ = 0;
+    crossfading_ = false;
+    crossfade_counter_ = 0;
+
+    // Zero the entire allocation (main buffer + tail).
+    size_t total_samples =
+        (size_ + kInterpolationTail) * static_cast<size_t>(channels_);
+    std::memset(buffer_, 0, total_samples * sizeof(float));
+}
+
+// ---------------------------------------------------------------------------
+// Write
+// ---------------------------------------------------------------------------
+
+void RecordingBuffer::Write(float left, float right) {
+    size_t idx = write_head_ * channels_;
+    buffer_[idx] = left;
+    buffer_[idx + 1] = right;
+
+    // Keep the tail in sync when writing into the first kInterpolationTail
+    // frames.
+    if (write_head_ < static_cast<size_t>(kInterpolationTail)) {
+        UpdateTail();
+    }
+
+    write_head_++;
+    if (write_head_ >= size_) {
+        write_head_ = 0;
+    }
+}
+
+void RecordingBuffer::Write(const StereoFrame& frame) {
+    Write(frame.l, frame.r);
+}
+
+// ---------------------------------------------------------------------------
+// UpdateTail
+// ---------------------------------------------------------------------------
+
+void RecordingBuffer::UpdateTail() {
+    // The tail sits right after the main buffer and mirrors the first
+    // kInterpolationTail frames so that index arithmetic for Hermite
+    // interpolation at the wrap boundary just works.
+    for (int i = 0; i < kInterpolationTail; ++i) {
+        size_t src = static_cast<size_t>(i) * channels_;
+        size_t dst = (size_ + static_cast<size_t>(i)) * channels_;
+        for (int c = 0; c < channels_; ++c) {
+            buffer_[dst + c] = buffer_[src + c];
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReadHermite
+// ---------------------------------------------------------------------------
+
+float RecordingBuffer::ReadHermite(int channel, float position) const {
+    // Wrap position into [0, size_).
+    while (position < 0.0f) position += static_cast<float>(size_);
+    while (position >= static_cast<float>(size_)) {
+        position -= static_cast<float>(size_);
+    }
+
+    // Integer and fractional parts.
+    int pos_int = static_cast<int>(position);
+    float frac = position - static_cast<float>(pos_int);
+
+    // Four sample positions for Hermite: -1, 0, +1, +2 relative to pos_int.
+    // Because the tail copies the first kInterpolationTail frames right after
+    // the main buffer, indices 0/+1/+2 that land past size_ can read
+    // directly from the tail. Only the -1 case needs explicit wrapping.
+    size_t i0 = static_cast<size_t>(pos_int);
+    size_t i_1 = (i0 == 0) ? size_ - 1 : i0 - 1;
+    // i1 and i2 can overflow into the tail region -- that is fine; the tail
+    // holds valid data for up to kInterpolationTail frames past the end.
+    size_t i1 = i0 + 1;
+    size_t i2 = i0 + 2;
+
+    // If i1 or i2 land past the tail, wrap explicitly (only possible when
+    // size_ < kInterpolationTail, which shouldn't happen in practice, but
+    // defensive coding).
+    if (i1 >= size_ + kInterpolationTail) i1 -= size_;
+    if (i2 >= size_ + kInterpolationTail) i2 -= size_;
+
+    float y_1 = buffer_[i_1 * channels_ + channel];
+    float y0  = buffer_[i0  * channels_ + channel];
+    float y1  = buffer_[i1  * channels_ + channel];
+    float y2  = buffer_[i2  * channels_ + channel];
+
+    return InterpolateHermite(y_1, y0, y1, y2, frac);
+}
+
+// ---------------------------------------------------------------------------
+// ReadLinear
+// ---------------------------------------------------------------------------
+
+float RecordingBuffer::ReadLinear(int channel, float position) const {
+    // Wrap position into [0, size_).
+    while (position < 0.0f) position += static_cast<float>(size_);
+    while (position >= static_cast<float>(size_)) {
+        position -= static_cast<float>(size_);
+    }
+
+    int pos_int = static_cast<int>(position);
+    float frac = position - static_cast<float>(pos_int);
+
+    size_t i0 = static_cast<size_t>(pos_int);
+    // The tail covers at least 1 frame past the end, so i0+1 == size_ is
+    // fine -- it reads from the tail.
+    size_t i1 = i0 + 1;
+    if (i1 >= size_ + kInterpolationTail) i1 -= size_;
+
+    float y0 = buffer_[i0 * channels_ + channel];
+    float y1 = buffer_[i1 * channels_ + channel];
+
+    return InterpolateLinear(y0, y1, frac);
+}
+
+// ---------------------------------------------------------------------------
+// Freeze crossfade
+// ---------------------------------------------------------------------------
+
+void RecordingBuffer::StartFreezeCrossfade() {
+    crossfading_ = true;
+    crossfade_counter_ = kCrossfadeSamples;
+}
+
+void RecordingBuffer::ProcessFreezeCrossfade() {
+    if (!crossfading_) return;
+
+    // Apply a short linear fade at the current write head to smooth the
+    // transition.  Each call attenuates the sample at (write_head_ - counter)
+    // by the crossfade envelope so there is no discontinuity at the freeze
+    // point.
+    if (crossfade_counter_ > 0) {
+        float gain =
+            static_cast<float>(crossfade_counter_) / kCrossfadeSamples;
+
+        // The frame we want to fade is the one that was most recently frozen.
+        // write_head_ points to where the *next* write would go, so the
+        // frozen edge is at (write_head_ - kCrossfadeSamples + counter - 1)
+        // but we step backwards from the freeze point one sample at a time.
+        int offset = kCrossfadeSamples - crossfade_counter_;
+        int frame = static_cast<int>(write_head_) - 1 - offset;
+        if (frame < 0) frame += static_cast<int>(size_);
+
+        size_t idx = static_cast<size_t>(frame) * channels_;
+        for (int c = 0; c < channels_; ++c) {
+            buffer_[idx + c] *= gain;
+        }
+
+        crossfade_counter_--;
+        if (crossfade_counter_ == 0) {
+            crossfading_ = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RequiredBytes
+// ---------------------------------------------------------------------------
+
+size_t RecordingBuffer::RequiredBytes(float sample_rate,
+                                      float duration_seconds,
+                                      int channels) {
+    size_t num_frames =
+        static_cast<size_t>(sample_rate * duration_seconds);
+    // Main buffer + tail for interpolation.
+    size_t total_samples =
+        (num_frames + kInterpolationTail) * static_cast<size_t>(channels);
+    return total_samples * sizeof(float);
+}
+
+} // namespace beads
