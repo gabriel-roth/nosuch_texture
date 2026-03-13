@@ -191,11 +191,11 @@ static const uint8_t pageRouting[] = {
 };
 
 static const _NT_parameterPage pages[] = {
-    { .name = "GRAIN",   .numParams = ARRAY_SIZE(pageGrain),   .group = 1, .unused = {}, .params = pageGrain },
-    { .name = "MIX",     .numParams = ARRAY_SIZE(pageMix),     .group = 1, .unused = {}, .params = pageMix },
-    { .name = "AR",      .numParams = ARRAY_SIZE(pageAR),      .group = 1, .unused = {}, .params = pageAR },
-    { .name = "MODE",    .numParams = ARRAY_SIZE(pageMode),     .group = 2, .unused = {}, .params = pageMode },
-    { .name = "ROUTING", .numParams = ARRAY_SIZE(pageRouting), .group = 3, .unused = {}, .params = pageRouting },
+    { .name = "Grain",             .numParams = ARRAY_SIZE(pageGrain),   .group = 1, .unused = {}, .params = pageGrain },
+    { .name = "Mix",               .numParams = ARRAY_SIZE(pageMix),     .group = 1, .unused = {}, .params = pageMix },
+    { .name = "Attenurandomizers", .numParams = ARRAY_SIZE(pageAR),      .group = 1, .unused = {}, .params = pageAR },
+    { .name = "Mode",              .numParams = ARRAY_SIZE(pageMode),     .group = 2, .unused = {}, .params = pageMode },
+    { .name = "Routing",           .numParams = ARRAY_SIZE(pageRouting), .group = 3, .unused = {}, .params = pageRouting },
 };
 
 static const _NT_parameterPages parameterPages = {
