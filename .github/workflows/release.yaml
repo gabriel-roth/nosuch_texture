@@ -1,0 +1,51 @@
+name: Build and Release Beads Plugin
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install ARM toolchain
+        run: |
+          brew update
+          brew install --cask gcc-arm-embedded
+
+      - name: Verify installation
+        run: arm-none-eabi-g++ --version
+
+      - name: Build plugin
+        run: |
+          cd NT
+          make clean
+          make hardware
+
+      - name: Prepare release archive
+        run: |
+          mkdir -p release/programs/plug-ins/nt_beads
+          cp NT/plugins/nt_beads.o release/programs/plug-ins/nt_beads/
+          cd release
+          zip -r ../nt_beads-plugin.zip programs
+          cd ..
+          echo "Archive contents:"
+          unzip -l nt_beads-plugin.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nt_beads-plugin.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
