@@ -15,11 +15,12 @@ static size_t AlignUp(size_t size, size_t alignment = kImplAlignment) {
 }
 
 BeadsProcessor::MemoryRequirements BeadsProcessor::GetMemoryRequirements(float sample_rate) {
+    (void)sample_rate;  // Frame budget is fixed; duration varies with rate.
     MemoryRequirements req;
 
     size_t impl_bytes = AlignUp(sizeof(Impl));
-    size_t recording_bytes = RecordingBuffer::RequiredBytes(
-        sample_rate, kDefaultBufferDuration, 2);
+    size_t recording_bytes =
+        (kDefaultBufferFrames + kInterpolationTail) * 2 * sizeof(float);
     size_t reverb_bytes = kReverbBufferSize * sizeof(float);
 
     // Add alignment padding so Init() can align the base pointer internally
@@ -51,11 +52,10 @@ void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
     impl_->prev_freeze = false;
     impl_->delay_mode = false;
 
-    // Allocate recording buffer
-    size_t recording_bytes = RecordingBuffer::RequiredBytes(
-        sample_rate, kDefaultBufferDuration, 2);
-    size_t num_frames = static_cast<size_t>(sample_rate * kDefaultBufferDuration);
-    impl_->recording_buffer.Init(reinterpret_cast<float*>(ptr), num_frames, 2);
+    // Allocate recording buffer (fixed frame budget; duration varies with sample rate)
+    size_t recording_bytes =
+        (kDefaultBufferFrames + kInterpolationTail) * 2 * sizeof(float);
+    impl_->recording_buffer.Init(reinterpret_cast<float*>(ptr), kDefaultBufferFrames, 2);
     ptr += AlignUp(recording_bytes);
 
     // Allocate reverb delay memory
@@ -97,6 +97,7 @@ void BeadsProcessor::SetParameters(const BeadsParameters& params) {
         impl_->prev_quality_mode = params.quality_mode;
         impl_->recording_buffer.SetDecimationFactor(
             DecimationFactorForQuality(params.quality_mode));
+        impl_->recording_buffer.Clear();
         impl_->quality_xfade_counter = Impl::kQualityXfadeSamples;
     }
 

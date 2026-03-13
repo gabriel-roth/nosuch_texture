@@ -53,8 +53,10 @@ enum class TriggerMode : uint8_t {
 // Maximum number of simultaneous grains
 static constexpr int kMaxGrains = 30;
 
-// Default recording buffer duration in seconds
-static constexpr float kDefaultBufferDuration = 2.0f;
+// Recording buffer size in frames (fixed memory budget).
+// 4 seconds at 48kHz; at 96kHz the same frame count gives 2 seconds.
+// Decimation extends effective duration: HiFi 4s, Clouds 8s, Tape 16s, LoFi 32s.
+static constexpr size_t kDefaultBufferFrames = 48000 * 4;  // 192000 frames
 
 // Reverb delay memory size (12 partitioned delay lines, ~12K samples needed)
 static constexpr size_t kReverbBufferSize = 16384;

@@ -69,6 +69,15 @@ void RecordingBuffer::Write(const StereoFrame& frame) {
     Write(frame.l, frame.r);
 }
 
+void RecordingBuffer::Clear() {
+    if (!buffer_ || size_ == 0) return;
+    size_t total_samples =
+        (size_ + kInterpolationTail) * static_cast<size_t>(channels_);
+    std::memset(buffer_, 0, total_samples * sizeof(float));
+    write_head_ = 0;
+    ResetAccumulator();
+}
+
 void RecordingBuffer::SetDecimationFactor(int factor) {
     if (factor < 1) factor = 1;
     decimation_factor_ = factor;

@@ -28,8 +28,8 @@ TEST_CASE("BeadsProcessor: GetMemoryRequirements returns sensible values", "[pro
     auto req = BeadsProcessor::GetMemoryRequirements(kSampleRate);
     REQUIRE(req.total_bytes > 0);
     REQUIRE(req.alignment > 0);
-    // Should be roughly 800KB at 48kHz with 2s buffer
-    REQUIRE(req.total_bytes > 500000);
+    // Should be roughly 1.5MB with 192K-frame buffer (4s at 48kHz)
+    REQUIRE(req.total_bytes > 1000000);
     REQUIRE(req.total_bytes < 10000000);
 }
 
@@ -290,8 +290,8 @@ TEST_CASE("BeadsProcessor: Memory requirements unchanged with decimation", "[pro
     // are the same regardless of what mode we'll use
     auto req = BeadsProcessor::GetMemoryRequirements(kSampleRate);
 
-    // Same size as before (2s at 48kHz stereo float + overhead)
-    REQUIRE(req.total_bytes > 500000);
+    // Fixed 192K-frame buffer (~1.5MB stereo float + overhead)
+    REQUIRE(req.total_bytes > 1000000);
     REQUIRE(req.total_bytes < 10000000);
 }
 

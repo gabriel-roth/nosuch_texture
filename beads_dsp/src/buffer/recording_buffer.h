@@ -56,6 +56,9 @@ public:
     void StartFreezeCrossfade();
     void ProcessFreezeCrossfade();
 
+    // Zero the buffer and reset the write head.
+    void Clear();
+
     void SetDecimationFactor(int factor);
     void ResetAccumulator();
     int decimation_factor() const { return decimation_factor_; }

@@ -256,8 +256,8 @@ static inline int clampi(int x, int lo, int hi) {
 static void calculateRequirements(_NT_algorithmRequirements& req, const int32_t* specifications) {
     req.numParameters = kNumParams;
     req.sram = sizeof(_beadsAlgorithm);
-    // DRAM for beads processor buffers (~800KB at 48kHz; decimation extends
-    // effective duration without increasing memory: HiFi 2s, Clouds 4s, Tape 8s, LoFi 16s)
+    // DRAM for beads processor buffers (~1.5MB fixed frame budget; decimation extends
+    // effective duration: HiFi 4s, Clouds 8s, Tape 16s, LoFi 32s at 48kHz)
     auto memReq = beads::BeadsProcessor::GetMemoryRequirements((float)NT_globals.sampleRate);
     req.dram = (uint32_t)memReq.total_bytes;
     req.dtc = 0;

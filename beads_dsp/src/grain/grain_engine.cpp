@@ -78,7 +78,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     int df = buffer_->decimation_factor();
     float df_f = static_cast<float>(df);
     float min_dur = 0.01f;   // 10ms
-    float max_dur = kDefaultBufferDuration * df_f;
+    float max_dur = static_cast<float>(buffer_->size()) * df_f / sample_rate_;
     float duration = min_dur * std::pow(max_dur / min_dur, abs_size);
     gp.size = duration * sample_rate_;
 
