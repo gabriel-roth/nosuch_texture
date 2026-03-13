@@ -74,12 +74,12 @@ void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
     impl_->auto_gain.Init(sample_rate);
     impl_->wavetable_osc.Init(sample_rate);
 
-    // Feedback HP filter at ~20Hz to remove DC
+    // Feedback HP filter at ~30Hz to remove DC and sub-bass buildup
     impl_->feedback_hp_l.Init();
-    impl_->feedback_hp_l.SetFrequencyHz(20.0f, sample_rate);
+    impl_->feedback_hp_l.SetFrequencyHz(30.0f, sample_rate);
     impl_->feedback_hp_l.SetQ(0.707f);
     impl_->feedback_hp_r.Init();
-    impl_->feedback_hp_r.SetFrequencyHz(20.0f, sample_rate);
+    impl_->feedback_hp_r.SetFrequencyHz(30.0f, sample_rate);
     impl_->feedback_hp_r.SetQ(0.707f);
 }
 

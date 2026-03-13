@@ -16,6 +16,8 @@ void Reverb::Init(float* buffer, size_t buffer_size, float sample_rate) {
 
     lp_state_l_ = 0.0f;
     lp_state_r_ = 0.0f;
+    dc_estimate_l_ = 0.0f;
+    dc_estimate_r_ = 0.0f;
     feedback_l_ = 0.0f;
     feedback_r_ = 0.0f;
 
@@ -144,9 +146,14 @@ void Reverb::Process(float left_in, float right_in,
     // One-pole LP in feedback path (frequency-dependent decay)
     ONE_POLE(lp_state_l_, al2_out, lp_coeff);
 
+    // DC blocker: subtract slowly-tracked DC estimate to prevent
+    // low-frequency buildup at high decay settings.
+    ONE_POLE(dc_estimate_l_, lp_state_l_, kDcBlockCoeff);
+    float tank_l_dc_blocked = lp_state_l_ - dc_estimate_l_;
+
     // Feedback delay L2
     float dl2_out = delay_l2_.Read(delay_l2_.size());
-    delay_l2_.Write(lp_state_l_);
+    delay_l2_.Write(tank_l_dc_blocked);
     delay_l2_.Advance();
 
     // Safety: prevent unbounded energy accumulation
@@ -168,9 +175,13 @@ void Reverb::Process(float left_in, float right_in,
     // One-pole LP
     ONE_POLE(lp_state_r_, ar2_out, lp_coeff);
 
+    // DC blocker
+    ONE_POLE(dc_estimate_r_, lp_state_r_, kDcBlockCoeff);
+    float tank_r_dc_blocked = lp_state_r_ - dc_estimate_r_;
+
     // Feedback delay R2
     float dr2_out = delay_r2_.Read(delay_r2_.size());
-    delay_r2_.Write(lp_state_r_);
+    delay_r2_.Write(tank_r_dc_blocked);
     delay_r2_.Advance();
 
     feedback_r_ = SoftClip(dr2_out);

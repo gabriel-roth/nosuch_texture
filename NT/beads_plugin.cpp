@@ -170,7 +170,7 @@ static const _NT_parameter parameters[] = {
     { .name = "Freeze",       .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = freezeStrings },
     { .name = "Trigger mode", .min = 0, .max = 2, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = triggerStrings },
     { .name = "Quality",      .min = 0, .max = 3, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = qualityStrings },
-    { .name = "Input gain",   .min = -60, .max = 20, .def = -10, .unit = kNT_unitDb_minInf, .scaling = 0, .enumStrings = NULL },
+    { .name = "Input gain",   .min = -60, .max = 20, .def = 0, .unit = kNT_unitDb_minInf, .scaling = 0, .enumStrings = NULL },
     { .name = "Stereo input", .min = 0, .max = 1, .def = 1, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = stereoInputStrings },
 };
 

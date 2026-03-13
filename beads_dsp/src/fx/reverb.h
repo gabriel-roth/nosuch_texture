@@ -49,6 +49,12 @@ private:
     float lp_state_l_ = 0.0f;
     float lp_state_r_ = 0.0f;
 
+    // DC blocker: slowly-tracking DC estimate subtracted from tank signal.
+    // Prevents DC accumulation in the feedback loop at high decay settings.
+    float dc_estimate_l_ = 0.0f;
+    float dc_estimate_r_ = 0.0f;
+    static constexpr float kDcBlockCoeff = 0.0005f;  // ~3.8Hz at 48kHz
+
     // -- 12 individual delay lines --
 
     // Input diffusion allpass delay lines

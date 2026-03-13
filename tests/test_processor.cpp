@@ -359,6 +359,145 @@ TEST_CASE("BeadsProcessor: Feedback produces sustained echo in delay mode", "[pr
     REQUIRE(echo_level_with_fb > 0.01f);
 }
 
+TEST_CASE("BeadsProcessor: Output levels match Eurorack input levels", "[processor][levels]") {
+    // Eurorack audio is ±5V. The plugin scales input ×0.2 (→ ±1.0 internal)
+    // and output ×5.0 (→ ±5V). The DSP chain should maintain roughly unity
+    // gain so that output amplitudes match input amplitudes.
+    //
+    // Test: send a ±1.0 sine (= ±5V Eurorack) through the full processor
+    // in grain mode and delay mode, then verify the wet output peak is
+    // within a reasonable range (not drastically attenuated or amplified).
+
+    static constexpr float kSineFreq = 440.0f;
+    static constexpr float kSineAmplitude = 1.0f;  // ±5V Eurorack level
+    static constexpr int kWarmupBlocks = 100;  // Let grains fill the buffer
+    static constexpr int kMeasureBlocks = 100;
+
+    auto make_sine_block = [](StereoFrame* buf, size_t n, int block_idx) {
+        for (size_t i = 0; i < n; ++i) {
+            float t = static_cast<float>(block_idx * static_cast<int>(n) + static_cast<int>(i));
+            float phase = t / kSampleRate * kSineFreq * 2.0f * 3.14159265f;
+            float s = std::sin(phase) * kSineAmplitude;
+            buf[i] = {s, s};
+        }
+    };
+
+    // -- Grain mode: 100% wet, 0dB gain, no reverb, no feedback --
+    SECTION("Grain mode at 100% wet") {
+        TestProcessor tp;
+        BeadsParameters params;
+        params.density = 0.2f;            // Regular grain triggers
+        params.size = 0.5f;               // Medium grains
+        params.time = 0.0f;               // Read from most recent audio
+        params.shape = 0.5f;
+        params.pitch = 0.0f;              // Unity pitch
+        params.dry_wet = 1.0f;            // Full wet
+        params.feedback = 0.0f;
+        params.reverb = 0.0f;
+        params.manual_gain_db = 0.0f;     // 0dB = unity
+        params.trigger_mode = TriggerMode::kLatched;
+        tp.processor.SetParameters(params);
+
+        std::vector<StereoFrame> input(kBlockSize);
+        std::vector<StereoFrame> output(kBlockSize);
+
+        // Warm up: fill buffer and let grains stabilize
+        for (int b = 0; b < kWarmupBlocks; ++b) {
+            make_sine_block(input.data(), kBlockSize, b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+        }
+
+        // Measure peak output level
+        float peak = 0.0f;
+        for (int b = 0; b < kMeasureBlocks; ++b) {
+            make_sine_block(input.data(), kBlockSize, kWarmupBlocks + b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+            for (size_t i = 0; i < kBlockSize; ++i) {
+                peak = std::max(peak,
+                    std::max(std::abs(output[i].l), std::abs(output[i].r)));
+            }
+        }
+
+        // Wet output should be within -6dB to +3dB of input level.
+        // (±1.0 input → output peak should be between 0.5 and 1.4)
+        INFO("Grain mode wet peak = " << peak);
+        REQUIRE(peak > 0.5f);
+        REQUIRE(peak < 1.4f);
+    }
+
+    // -- Delay mode: 100% wet, 0dB gain --
+    SECTION("Delay mode at 100% wet") {
+        TestProcessor tp;
+        BeadsParameters params;
+        params.size = 1.0f;               // Delay mode
+        params.density = 0.3f;            // Moderate delay time
+        params.time = 0.1f;               // Short delay multiplier
+        params.pitch = 0.0f;
+        params.shape = 0.0f;              // No tremolo
+        params.dry_wet = 1.0f;
+        params.feedback = 0.0f;
+        params.reverb = 0.0f;
+        params.manual_gain_db = 0.0f;
+        tp.processor.SetParameters(params);
+
+        std::vector<StereoFrame> input(kBlockSize);
+        std::vector<StereoFrame> output(kBlockSize);
+
+        for (int b = 0; b < kWarmupBlocks; ++b) {
+            make_sine_block(input.data(), kBlockSize, b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+        }
+
+        float peak = 0.0f;
+        for (int b = 0; b < kMeasureBlocks; ++b) {
+            make_sine_block(input.data(), kBlockSize, kWarmupBlocks + b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+            for (size_t i = 0; i < kBlockSize; ++i) {
+                peak = std::max(peak,
+                    std::max(std::abs(output[i].l), std::abs(output[i].r)));
+            }
+        }
+
+        INFO("Delay mode wet peak = " << peak);
+        REQUIRE(peak > 0.5f);
+        REQUIRE(peak < 1.4f);
+    }
+
+    // -- Dry pass-through: should be unity --
+    SECTION("Dry pass-through") {
+        TestProcessor tp;
+        BeadsParameters params;
+        params.dry_wet = 0.0f;            // Full dry
+        params.reverb = 0.0f;
+        params.manual_gain_db = 0.0f;
+        tp.processor.SetParameters(params);
+
+        std::vector<StereoFrame> input(kBlockSize);
+        std::vector<StereoFrame> output(kBlockSize);
+
+        // A few blocks to settle
+        for (int b = 0; b < 10; ++b) {
+            make_sine_block(input.data(), kBlockSize, b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+        }
+
+        float peak = 0.0f;
+        for (int b = 0; b < 10; ++b) {
+            make_sine_block(input.data(), kBlockSize, 10 + b);
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+            for (size_t i = 0; i < kBlockSize; ++i) {
+                peak = std::max(peak,
+                    std::max(std::abs(output[i].l), std::abs(output[i].r)));
+            }
+        }
+
+        // Dry pass-through should be near unity
+        INFO("Dry pass-through peak = " << peak);
+        REQUIRE(peak > 0.9f);
+        REQUIRE(peak < 1.1f);
+    }
+}
+
 TEST_CASE("BeadsProcessor: High density + large size produces continuous audio", "[processor][stress]") {
     TestProcessor tp;
 
