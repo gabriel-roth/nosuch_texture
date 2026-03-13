@@ -170,7 +170,7 @@ static const _NT_parameter parameters[] = {
     { .name = "Freeze",       .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = freezeStrings },
     { .name = "Trigger mode", .min = 0, .max = 2, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = triggerStrings },
     { .name = "Quality",      .min = 0, .max = 3, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = qualityStrings },
-    { .name = "Input gain",   .min = -60, .max = 20, .def = -60, .unit = kNT_unitDb_minInf, .scaling = 0, .enumStrings = NULL },
+    { .name = "Input gain",   .min = -60, .max = 20, .def = -10, .unit = kNT_unitDb_minInf, .scaling = 0, .enumStrings = NULL },
     { .name = "Stereo input", .min = 0, .max = 1, .def = 1, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = stereoInputStrings },
 };
 
@@ -256,7 +256,8 @@ static inline int clampi(int x, int lo, int hi) {
 static void calculateRequirements(_NT_algorithmRequirements& req, const int32_t* specifications) {
     req.numParameters = kNumParams;
     req.sram = sizeof(_beadsAlgorithm);
-    // DRAM for beads processor buffers (~1.6MB at 48kHz, ~3.1MB at 96kHz)
+    // DRAM for beads processor buffers (~800KB at 48kHz; decimation extends
+    // effective duration without increasing memory: HiFi 2s, Clouds 4s, Tape 8s, LoFi 16s)
     auto memReq = beads::BeadsProcessor::GetMemoryRequirements((float)NT_globals.sampleRate);
     req.dram = (uint32_t)memReq.total_bytes;
     req.dtc = 0;
@@ -313,19 +314,10 @@ static void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
     const int16_t* v = alg->v;
     int numFrames = numFramesBy4 * 4;
 
-    // --- Read audio input ---
-    beads::StereoFrame input[16];  // NT max is typically 4-16 frames
+    // --- Audio I/O bus config ---
     int inputBusL = v[kParamInputL] - 1;
     int inputBusR = v[kParamInputR] - 1;
     bool stereoIn = (inputBusR >= 0);
-
-    for (int i = 0; i < numFrames; ++i) {
-        float l = (inputBusL >= 0) ? busFrames[inputBusL * numFrames + i] : 0.0f;
-        float r = stereoIn ? busFrames[inputBusR * numFrames + i] : l;
-        // Scale ±5V bus voltage to ±1.0 internal range
-        input[i].l = l * 0.2f;
-        input[i].r = r * 0.2f;
-    }
 
     // --- Read CV buses ---
     float timeCv = 0.0f, sizeCv = 0.0f, shapeCv = 0.0f, pitchCv = 0.0f;
@@ -447,32 +439,48 @@ static void step(_NT_algorithm* self, float* busFrames, int numFramesBy4) {
 
     p.stereo_input = (v[kParamStereoInput] != 0);
 
-    // --- Process ---
+    // --- Process audio in chunks (numFrames may exceed internal buffer size) ---
     alg->processor.SetParameters(p);
 
-    beads::StereoFrame output[16];
-    alg->processor.Process(input, output, numFrames);
-
-    // --- Write output ---
     int outBusL = v[kParamOutputL] - 1;
     int outBusR = v[kParamOutputR] - 1;
     bool replaceL = v[kParamOutputLMode];
     bool replaceR = v[kParamOutputRMode];
 
-    if (outBusL >= 0) {
-        float* out = busFrames + outBusL * numFrames;
-        if (replaceL) {
-            for (int i = 0; i < numFrames; ++i) out[i] = output[i].l * 5.0f;
-        } else {
-            for (int i = 0; i < numFrames; ++i) out[i] += output[i].l * 5.0f;
+    static constexpr int kChunkSize = 64;  // matches beads::kMaxBlockSize
+    for (int off = 0; off < numFrames; off += kChunkSize) {
+        int chunk = numFrames - off;
+        if (chunk > kChunkSize) chunk = kChunkSize;
+
+        // Read audio input
+        beads::StereoFrame input[kChunkSize];
+        for (int i = 0; i < chunk; ++i) {
+            float l = (inputBusL >= 0) ? busFrames[inputBusL * numFrames + off + i] : 0.0f;
+            float r = stereoIn ? busFrames[inputBusR * numFrames + off + i] : l;
+            input[i].l = l * 0.2f;
+            input[i].r = r * 0.2f;
         }
-    }
-    if (outBusR >= 0) {
-        float* out = busFrames + outBusR * numFrames;
-        if (replaceR) {
-            for (int i = 0; i < numFrames; ++i) out[i] = output[i].r * 5.0f;
-        } else {
-            for (int i = 0; i < numFrames; ++i) out[i] += output[i].r * 5.0f;
+
+        // Process
+        beads::StereoFrame output[kChunkSize];
+        alg->processor.Process(input, output, chunk);
+
+        // Write output
+        if (outBusL >= 0) {
+            float* out = busFrames + outBusL * numFrames + off;
+            if (replaceL) {
+                for (int i = 0; i < chunk; ++i) out[i] = output[i].l * 5.0f;
+            } else {
+                for (int i = 0; i < chunk; ++i) out[i] += output[i].l * 5.0f;
+            }
+        }
+        if (outBusR >= 0) {
+            float* out = busFrames + outBusR * numFrames + off;
+            if (replaceR) {
+                for (int i = 0; i < chunk; ++i) out[i] = output[i].r * 5.0f;
+            } else {
+                for (int i = 0; i < chunk; ++i) out[i] += output[i].r * 5.0f;
+            }
         }
     }
 
@@ -583,10 +591,10 @@ static void setupUi(_NT_algorithm* self, _NT_float3& pots) {
 
 static const char* qualityLabel(int q) {
     switch (q) {
-    case 0: return "HiFi";
-    case 1: return "Clouds";
-    case 2: return "LoFi";
-    case 3: return "Tape";
+    case 0: return "HiFi 2s";
+    case 1: return "Clouds 4s";
+    case 2: return "LoFi 16s";
+    case 3: return "Tape 8s";
     default: return "?";
     }
 }

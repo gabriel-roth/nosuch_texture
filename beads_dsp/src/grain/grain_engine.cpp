@@ -73,9 +73,12 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     float abs_size = std::fabs(mod_size);
     abs_size = Clamp(abs_size, 0.0f, 0.999f);
 
-    // Exponential mapping from 0..1 to 10ms..4s
+    // Exponential mapping from 0..1 to 10ms..max duration
+    // Decimation extends effective buffer duration
+    int df = buffer_->decimation_factor();
+    float df_f = static_cast<float>(df);
     float min_dur = 0.01f;   // 10ms
-    float max_dur = kDefaultBufferDuration;  // 4s
+    float max_dur = kDefaultBufferDuration * df_f;
     float duration = min_dur * std::pow(max_dur / min_dur, abs_size);
     gp.size = duration * sample_rate_;
 
@@ -99,7 +102,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     // --- PITCH → playback rate ---
     float mod_pitch = ar_pitch_.Process(params.pitch, params.pitch_ar,
                                          params.pitch_cv, params.pitch_cv_connected);
-    gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_;
+    gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_ / df_f;
     if (reverse) gp.pitch_ratio = -gp.pitch_ratio;
 
     // --- SHAPE → envelope shape ---
@@ -141,38 +144,42 @@ void GrainEngine::Process(const BeadsParameters& params,
         }
     }
 
-    // --- Render all active grains, overlap-add ---
+    // --- Zero output buffer ---
     for (size_t i = 0; i < num_frames; ++i) {
-        float sum_l = 0.0f;
-        float sum_r = 0.0f;
-        int active_count = 0;
+        output[i] = {0.0f, 0.0f};
+    }
 
-        for (int g = 0; g < kMaxGrains; ++g) {
-            if (!grains_[g].active()) continue;
+    // --- Render grains: grain-major order for cache locality ---
+    // Processing each grain across the full block keeps buffer reads
+    // sequential (consecutive samples read adjacent memory), which is
+    // much faster than sample-major order where each sample touches
+    // all active grain positions and thrashes L1 cache.
+    int active_count = 0;
+    for (int g = 0; g < kMaxGrains; ++g) {
+        if (!grains_[g].active()) continue;
+        ++active_count;
 
+        for (size_t i = 0; i < num_frames; ++i) {
             float gl = 0.0f;
             float gr = 0.0f;
-            bool still_active = grains_[g].Process(*buffer_, &gl, &gr);
-            (void)still_active;
-
-            sum_l += gl;
-            sum_r += gr;
-            ++active_count;
+            grains_[g].Process(*buffer_, &gl, &gr);
+            output[i].l += gl;
+            output[i].r += gr;
         }
+    }
 
-        // --- Overlap normalization ---
-        // Smooth the active grain count with a one-pole filter.
-        float count_f = static_cast<float>(active_count);
-        ONE_POLE(overlap_count_lp_, count_f, 0.01f);
+    // --- Overlap normalization ---
+    float count_f = static_cast<float>(active_count);
+    ONE_POLE(overlap_count_lp_, count_f, 0.01f);
 
-        // Scale output by 1 / max(1, sqrt(overlap)) to prevent volume spikes.
-        float norm = 1.0f;
-        if (overlap_count_lp_ > 1.0f) {
-            norm = 1.0f / std::sqrt(overlap_count_lp_);
-        }
+    float norm = 1.0f;
+    if (overlap_count_lp_ > 1.0f) {
+        norm = 1.0f / std::sqrt(overlap_count_lp_);
+    }
 
-        output[i].l = sum_l * norm;
-        output[i].r = sum_r * norm;
+    for (size_t i = 0; i < num_frames; ++i) {
+        output[i].l *= norm;
+        output[i].r *= norm;
     }
 }
 

@@ -28,8 +28,8 @@ TEST_CASE("BeadsProcessor: GetMemoryRequirements returns sensible values", "[pro
     auto req = BeadsProcessor::GetMemoryRequirements(kSampleRate);
     REQUIRE(req.total_bytes > 0);
     REQUIRE(req.alignment > 0);
-    // Should be roughly 1.5-2MB at 48kHz with 4s buffer
-    REQUIRE(req.total_bytes > 1000000);
+    // Should be roughly 800KB at 48kHz with 2s buffer
+    REQUIRE(req.total_bytes > 500000);
     REQUIRE(req.total_bytes < 10000000);
 }
 
@@ -205,6 +205,96 @@ TEST_CASE("BeadsProcessor: All quality modes work without NaN", "[processor]") {
     }
 }
 
+TEST_CASE("BeadsProcessor: Mode transitions produce no NaN", "[processor][decimation]") {
+    TestProcessor tp;
+
+    std::vector<StereoFrame> input(kBlockSize);
+    for (size_t i = 0; i < kBlockSize; ++i) {
+        float phase = static_cast<float>(i) / kSampleRate * 440.0f * 2.0f * 3.14159265f;
+        input[i] = {std::sin(phase), std::sin(phase)};
+    }
+    std::vector<StereoFrame> output(kBlockSize);
+
+    // Cycle through all quality modes rapidly
+    QualityMode modes[] = {
+        QualityMode::kHiFi, QualityMode::kClouds,
+        QualityMode::kCleanLoFi, QualityMode::kTape,
+        QualityMode::kHiFi
+    };
+
+    for (auto mode : modes) {
+        BeadsParameters params;
+        params.quality_mode = mode;
+        params.density = 0.3f;
+        params.size = 0.5f;
+        params.dry_wet = 1.0f;
+        params.manual_gain_db = 0.0f;
+        tp.processor.SetParameters(params);
+
+        for (int block = 0; block < 30; ++block) {
+            tp.processor.Process(input.data(), output.data(), kBlockSize);
+            for (size_t i = 0; i < kBlockSize; ++i) {
+                REQUIRE(std::isfinite(output[i].l));
+                REQUIRE(std::isfinite(output[i].r));
+            }
+        }
+    }
+}
+
+TEST_CASE("BeadsProcessor: LoFi delay mode produces output", "[processor][decimation]") {
+    // Verify LoFi delay mode (8x decimation) works correctly end-to-end.
+    // The buffer-level "Effective duration scales with decimation" test
+    // verifies the >2s retention property directly.
+    TestProcessor tp;
+
+    BeadsParameters params;
+    params.quality_mode = QualityMode::kCleanLoFi;
+    params.size = 1.0f;      // Delay mode
+    params.density = 0.3f;   // Moderate base delay
+    params.time = 0.0f;      // Short delay (read near write head)
+    params.dry_wet = 1.0f;
+    params.pitch = 0.0f;
+    params.shape = 0.0f;
+    params.manual_gain_db = 0.0f;
+    tp.processor.SetParameters(params);
+
+    std::vector<StereoFrame> input(kBlockSize);
+    std::vector<StereoFrame> output(kBlockSize);
+
+    // Feed continuous audio and check for delay output
+    float max_level = 0.0f;
+    for (int block = 0; block < 200; ++block) {
+        for (size_t i = 0; i < kBlockSize; ++i) {
+            float t = static_cast<float>(block * kBlockSize + i);
+            float phase = t / kSampleRate * 440.0f * 2.0f * 3.14159265f;
+            input[i] = {std::sin(phase) * 0.5f, std::sin(phase) * 0.5f};
+        }
+        tp.processor.Process(input.data(), output.data(), kBlockSize);
+
+        // Check later blocks after delay has converged
+        if (block > 50) {
+            for (size_t i = 0; i < kBlockSize; ++i) {
+                max_level = std::max(max_level,
+                    std::max(std::abs(output[i].l), std::abs(output[i].r)));
+                REQUIRE(std::isfinite(output[i].l));
+                REQUIRE(std::isfinite(output[i].r));
+            }
+        }
+    }
+
+    REQUIRE(max_level > 0.001f);
+}
+
+TEST_CASE("BeadsProcessor: Memory requirements unchanged with decimation", "[processor][decimation]") {
+    // Decimation doesn't change the physical buffer size — verify requirements
+    // are the same regardless of what mode we'll use
+    auto req = BeadsProcessor::GetMemoryRequirements(kSampleRate);
+
+    // Same size as before (2s at 48kHz stereo float + overhead)
+    REQUIRE(req.total_bytes > 500000);
+    REQUIRE(req.total_bytes < 10000000);
+}
+
 TEST_CASE("BeadsProcessor: Feedback produces sustained echo in delay mode", "[processor]") {
     // Run the same scenario with and without feedback.
     // With feedback, output during silence should be significantly louder
@@ -267,4 +357,45 @@ TEST_CASE("BeadsProcessor: Feedback produces sustained echo in delay mode", "[pr
     // With 90% feedback, signal should still be audible after 200 blocks
     REQUIRE(echo_level_with_fb > echo_level_without_fb * 10.0f);
     REQUIRE(echo_level_with_fb > 0.01f);
+}
+
+TEST_CASE("BeadsProcessor: High density + large size produces continuous audio", "[processor][stress]") {
+    TestProcessor tp;
+
+    BeadsParameters params;
+    params.density = 0.1f;    // Fast grain triggers
+    params.size = 0.9f;       // Long grains (many active)
+    params.dry_wet = 1.0f;
+    params.time = 0.5f;
+    params.shape = 0.5f;
+    params.pitch = 0.0f;
+    params.manual_gain_db = 0.0f;
+    params.trigger_mode = TriggerMode::kLatched;
+    tp.processor.SetParameters(params);
+
+    std::vector<StereoFrame> input(kBlockSize);
+    for (size_t i = 0; i < kBlockSize; ++i) {
+        float phase = static_cast<float>(i) / kSampleRate * 440.0f * 2.0f * 3.14159265f;
+        input[i] = {std::sin(phase), std::sin(phase)};
+    }
+
+    std::vector<StereoFrame> output(kBlockSize);
+
+    bool all_finite = true;
+    bool had_output = false;
+
+    for (int block = 0; block < 200; ++block) {
+        tp.processor.Process(input.data(), output.data(), kBlockSize);
+
+        for (size_t i = 0; i < kBlockSize; ++i) {
+            if (!std::isfinite(output[i].l) || !std::isfinite(output[i].r)) {
+                all_finite = false;
+            }
+            float level = std::max(std::abs(output[i].l), std::abs(output[i].r));
+            if (level > 0.001f) had_output = true;
+        }
+    }
+
+    REQUIRE(all_finite);
+    REQUIRE(had_output);
 }

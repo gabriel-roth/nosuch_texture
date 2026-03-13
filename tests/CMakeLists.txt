@@ -17,6 +17,7 @@ add_executable(beads_tests
     test_quality_modes.cpp
     test_auto_gain.cpp
     test_attenurandomizer.cpp
+    test_silence.cpp
 )
 
 target_link_libraries(beads_tests PRIVATE beads_dsp Catch2::Catch2WithMain)

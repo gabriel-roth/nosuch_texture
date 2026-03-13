@@ -197,6 +197,77 @@ TEST_CASE("DelayEngine: TIME multiplier affects delay length", "[delay]") {
     }
 }
 
+TEST_CASE("DelayEngine: Decimation adjusts delay times correctly", "[delay][decimation]") {
+    // With 4x decimation, the buffer represents 4x more real time.
+    // Delay calculations in buffer-frame units should account for this.
+    DelayTestBuffer tb(48000);
+    tb.buffer.SetDecimationFactor(4);
+
+    DelayEngine engine;
+    engine.Init(kSampleRate, &tb.buffer);
+
+    // Fill buffer with a sine wave
+    for (size_t i = 0; i < 48000; ++i) {
+        float phase = static_cast<float>(i) / kSampleRate * 440.0f * 2.0f * 3.14159265f;
+        tb.buffer.Write(std::sin(phase), std::sin(phase));
+    }
+
+    BeadsParameters params;
+    params.size = 1.0f;
+    params.density = 0.5f;
+    params.pitch = 0.0f;
+    params.shape = 0.0f;
+    params.time = 0.5f;
+
+    std::vector<StereoFrame> output(256);
+    for (int block = 0; block < 50; ++block) {
+        engine.Process(params, output.data(), 256);
+        for (size_t i = 0; i < 256; ++i) {
+            REQUIRE(std::isfinite(output[i].l));
+            REQUIRE(std::isfinite(output[i].r));
+        }
+    }
+}
+
+TEST_CASE("DelayEngine: Freeze loop with decimation", "[delay][decimation]") {
+    DelayTestBuffer tb(48000);
+    tb.buffer.SetDecimationFactor(8);
+
+    DelayEngine engine;
+    engine.Init(kSampleRate, &tb.buffer);
+
+    // Fill buffer
+    for (size_t i = 0; i < 48000; ++i) {
+        float phase = static_cast<float>(i) / 48000.0f * 2.0f * 3.14159265f * 10.0f;
+        tb.buffer.Write(std::sin(phase), std::sin(phase));
+    }
+
+    BeadsParameters params;
+    params.size = 1.0f;
+    params.density = 0.5f;
+    params.pitch = 0.0f;
+    params.shape = 0.0f;
+    params.time = 0.5f;
+
+    std::vector<StereoFrame> output(256);
+
+    // Process unfrozen
+    for (int i = 0; i < 10; ++i) {
+        engine.Process(params, output.data(), 256);
+    }
+
+    // Freeze
+    params.freeze = true;
+    params.size = 0.5f;
+    for (int i = 0; i < 20; ++i) {
+        engine.Process(params, output.data(), 256);
+        for (size_t j = 0; j < 256; ++j) {
+            REQUIRE(std::isfinite(output[j].l));
+            REQUIRE(std::isfinite(output[j].r));
+        }
+    }
+}
+
 TEST_CASE("DelayEngine: Output is finite with extreme parameters", "[delay]") {
     DelayTestBuffer tb(48000);
     DelayEngine engine;

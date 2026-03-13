@@ -278,6 +278,58 @@ TEST_CASE("QualityModes: Tape LimitFeedback does not create gain in compress/exp
     }
 }
 
+TEST_CASE("QualityModes: LoFi input LP attenuates above 2.5kHz", "[quality][decimation]") {
+    QualityProcessor qp_lofi, qp_hifi;
+    qp_lofi.Init(kSampleRate);
+    qp_hifi.Init(kSampleRate);
+
+    // Generate a 4kHz signal (above LoFi's 2.5kHz anti-aliasing cutoff)
+    float hifi_energy = 0.0f;
+    float lofi_energy = 0.0f;
+
+    for (int i = 0; i < 10000; ++i) {
+        float phase = static_cast<float>(i) / kSampleRate * 4000.0f * 2.0f * kPi;
+        float val = std::sin(phase);
+        StereoFrame in = {val, val};
+
+        StereoFrame hifi_out = qp_hifi.ProcessInput(in, QualityMode::kHiFi);
+        StereoFrame lofi_out = qp_lofi.ProcessInput(in, QualityMode::kCleanLoFi);
+
+        hifi_energy += hifi_out.l * hifi_out.l;
+        lofi_energy += lofi_out.l * lofi_out.l;
+    }
+
+    // LoFi LP at 2.5kHz should significantly attenuate 4kHz
+    REQUIRE(lofi_energy < hifi_energy * 0.3f);
+}
+
+TEST_CASE("QualityModes: Tape input LP attenuates above 5kHz", "[quality][decimation]") {
+    QualityProcessor qp_tape, qp_hifi;
+    qp_tape.Init(kSampleRate);
+    qp_hifi.Init(kSampleRate);
+
+    // Generate a 15kHz signal (well above Tape's 5kHz cutoff).
+    // Use a high frequency because tape mode's mu-law compression
+    // re-expands attenuated signals, so we need strong LP rejection.
+    float hifi_energy = 0.0f;
+    float tape_energy = 0.0f;
+
+    for (int i = 0; i < 10000; ++i) {
+        float phase = static_cast<float>(i) / kSampleRate * 15000.0f * 2.0f * kPi;
+        float val = std::sin(phase);
+        StereoFrame in = {val, val};
+
+        StereoFrame hifi_out = qp_hifi.ProcessInput(in, QualityMode::kHiFi);
+        StereoFrame tape_out = qp_tape.ProcessInput(in, QualityMode::kTape);
+
+        hifi_energy += hifi_out.l * hifi_out.l;
+        tape_energy += tape_out.l * tape_out.l;
+    }
+
+    // Tape LP at 5kHz should heavily attenuate 15kHz
+    REQUIRE(tape_energy < hifi_energy * 0.3f);
+}
+
 TEST_CASE("QualityModes: Tape feedback loop converges with low feedback", "[quality]") {
     QualityProcessor qp;
     qp.Init(kSampleRate);

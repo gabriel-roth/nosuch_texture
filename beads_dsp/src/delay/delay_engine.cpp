@@ -1,5 +1,6 @@
 #include "delay_engine.h"
 #include "../buffer/recording_buffer.h"
+#include "../util/cosine_table.h"
 #include "../util/dsp_utils.h"
 #include "../util/interpolation.h"
 
@@ -39,6 +40,8 @@ void DelayEngine::Process(const BeadsParameters& params,
     }
 
     const float buffer_size = static_cast<float>(buffer_->size());
+    const int df = buffer_->decimation_factor();
+    const float df_f = static_cast<float>(df);
 
     // ---------------------------------------------------------------
     // DENSITY -> base delay time (matches original Beads manual)
@@ -46,7 +49,7 @@ void DelayEngine::Process(const BeadsParameters& params,
     // CCW from noon (< 0.5): shorter base delay down to ~1ms.
     // CW from noon (> 0.5): shorter base delay + secondary tap.
     // ---------------------------------------------------------------
-    const float min_delay_samples = sample_rate_ * 0.001f;  // 1ms
+    const float min_delay_samples = sample_rate_ * 0.001f / df_f;  // 1ms in buffer frames
     const float max_delay_samples = buffer_size;
 
     // Map density 0..0.5 to delay time: 0 = min, 0.5 = max (full buffer)
@@ -90,8 +93,13 @@ void DelayEngine::Process(const BeadsParameters& params,
     // ---------------------------------------------------------------
     // PITCH -> pitch shifter ratio
     // ---------------------------------------------------------------
-    float pitch_ratio = SemitonesToRatio(params.pitch) * pitch_mod_ratio_;
-    pitch_shift_increment_ = pitch_ratio;
+    // pitch_ratio is in buffer-frame units (divided by df) so that the
+    // frozen-mode read_position_ advances at the correct real-time rate.
+    // The pitch *shifter* phase needs the raw ratio (1.0 = no shift)
+    // because it modulates around a position that already accounts for
+    // decimation via the delay-time calculation.
+    float pitch_ratio = SemitonesToRatio(params.pitch) * pitch_mod_ratio_ / df_f;
+    pitch_shift_increment_ = SemitonesToRatio(params.pitch) * pitch_mod_ratio_;
 
     // ---------------------------------------------------------------
     // SHAPE -> tremolo / slicer envelope
@@ -100,8 +108,13 @@ void DelayEngine::Process(const BeadsParameters& params,
     // ---------------------------------------------------------------
     float envelope_rate = 0.0f;
     if (smoothed_delay_time_ > 0.0f) {
-        // One full tremolo cycle per delay time period
-        envelope_rate = 1.0f / smoothed_delay_time_;
+        // One full tremolo cycle per real-time delay period.
+        // smoothed_delay_time_ is in buffer frames; each buffer frame
+        // represents df input samples, so the real-time delay in input
+        // samples is smoothed_delay_time_ * df.  The per-sample loop
+        // below advances envelope_phase_ once per input sample, so the
+        // rate must be 1 / (delay_in_input_samples).
+        envelope_rate = 1.0f / (smoothed_delay_time_ * df_f);
     }
 
     // ---------------------------------------------------------------
@@ -112,7 +125,7 @@ void DelayEngine::Process(const BeadsParameters& params,
         frozen_ = true;
         loop_start_ = static_cast<float>(buffer_->write_head());
         // SIZE selects loop duration (scaled from minimum to buffer length)
-        float min_loop = sample_rate_ * 0.01f;  // 10ms minimum loop
+        float min_loop = sample_rate_ * 0.01f / df_f;  // 10ms minimum loop in buffer frames
         loop_length_ = min_loop + params.size * std::max(0.0f, buffer_size - min_loop);
         loop_length_ = Clamp(loop_length_, min_loop, buffer_size);
 
@@ -141,7 +154,7 @@ void DelayEngine::Process(const BeadsParameters& params,
 
     // If frozen, TIME selects which portion of the buffer to loop
     if (frozen_) {
-        float min_loop = sample_rate_ * 0.01f;
+        float min_loop = sample_rate_ * 0.01f / df_f;
         loop_length_ = min_loop + params.size * std::max(0.0f, buffer_size - min_loop);
         loop_length_ = Clamp(loop_length_, min_loop, buffer_size);
         float scan_range = std::max(0.0f, buffer_size - loop_length_);
@@ -167,10 +180,10 @@ void DelayEngine::Process(const BeadsParameters& params,
         if (frozen_) {
             // In freeze mode, read from the captured loop
             read_position_ += pitch_ratio;
-            // Wrap within loop using fmod for NaN safety
+            // Wrap within loop. Pitch ratio is bounded so this executes 0-1 times.
             if (loop_length_ > 0.0f) {
-                read_position_ = std::fmod(read_position_, loop_length_);
-                if (read_position_ < 0.0f) read_position_ += loop_length_;
+                while (read_position_ >= loop_length_) read_position_ -= loop_length_;
+                while (read_position_ < 0.0f) read_position_ += loop_length_;
             } else {
                 read_position_ = 0.0f;
             }
@@ -187,18 +200,17 @@ void DelayEngine::Process(const BeadsParameters& params,
             }
 
             primary_pos = loop_start_ + read_position_;
-            // Wrap within buffer using fmod
             if (buffer_size > 0.0f) {
-                primary_pos = std::fmod(primary_pos, buffer_size);
-                if (primary_pos < 0.0f) primary_pos += buffer_size;
+                while (primary_pos >= buffer_size) primary_pos -= buffer_size;
+                while (primary_pos < 0.0f) primary_pos += buffer_size;
             }
         } else {
             // Normal delay mode: read position relative to write head
             float write_pos = static_cast<float>(buffer_->write_head());
             primary_pos = write_pos - current_delay;
             if (buffer_size > 0.0f) {
-                primary_pos = std::fmod(primary_pos, buffer_size);
-                if (primary_pos < 0.0f) primary_pos += buffer_size;
+                while (primary_pos >= buffer_size) primary_pos -= buffer_size;
+                while (primary_pos < 0.0f) primary_pos += buffer_size;
             }
         }
 
@@ -228,13 +240,13 @@ void DelayEngine::Process(const BeadsParameters& params,
             float head_offset = phase * window_size;
             float head_pos = primary_pos + head_offset;
             if (buffer_size > 0.0f) {
-                head_pos = std::fmod(head_pos, buffer_size);
-                if (head_pos < 0.0f) head_pos += buffer_size;
+                while (head_pos >= buffer_size) head_pos -= buffer_size;
+                while (head_pos < 0.0f) head_pos += buffer_size;
             }
 
             // Read from buffer with Hermite interpolation
-            float left = buffer_->ReadHermite(0, head_pos);
-            float right = buffer_->ReadHermite(1, head_pos);
+            float left, right;
+            buffer_->ReadHermiteStereo(head_pos, &left, &right);
 
             pitched_sample.l += left * tri_env;
             pitched_sample.r += right * tri_env;
@@ -265,11 +277,11 @@ void DelayEngine::Process(const BeadsParameters& params,
             float mirror_pos_in_loop = loop_length_ - xfade_len + read_position_;
             float mirror_pos = loop_start_ + mirror_pos_in_loop;
             if (buffer_size > 0.0f) {
-                mirror_pos = std::fmod(mirror_pos, buffer_size);
-                if (mirror_pos < 0.0f) mirror_pos += buffer_size;
+                while (mirror_pos >= buffer_size) mirror_pos -= buffer_size;
+                while (mirror_pos < 0.0f) mirror_pos += buffer_size;
             }
-            float mirror_l = buffer_->ReadHermite(0, mirror_pos);
-            float mirror_r = buffer_->ReadHermite(1, mirror_pos);
+            float mirror_l, mirror_r;
+            buffer_->ReadHermiteStereo(mirror_pos, &mirror_l, &mirror_r);
             // Blend: at read_position_=0, 100% mirror; at xfade boundary, 100% primary
             pitched_sample.l = pitched_sample.l * loop_xfade_gain + mirror_l * (1.0f - loop_xfade_gain);
             pitched_sample.r = pitched_sample.r * loop_xfade_gain + mirror_r * (1.0f - loop_xfade_gain);
@@ -291,25 +303,25 @@ void DelayEngine::Process(const BeadsParameters& params,
                 // In freeze mode, secondary tap also reads from the loop
                 float sec_offset = secondary_delay;
                 if (loop_length_ > 0.0f) {
-                    sec_offset = std::fmod(sec_offset, loop_length_);
-                    if (sec_offset < 0.0f) sec_offset += loop_length_;
+                    while (sec_offset >= loop_length_) sec_offset -= loop_length_;
+                    while (sec_offset < 0.0f) sec_offset += loop_length_;
                 }
                 secondary_pos = loop_start_ + sec_offset;
                 if (buffer_size > 0.0f) {
-                    secondary_pos = std::fmod(secondary_pos, buffer_size);
-                    if (secondary_pos < 0.0f) secondary_pos += buffer_size;
+                    while (secondary_pos >= buffer_size) secondary_pos -= buffer_size;
+                    while (secondary_pos < 0.0f) secondary_pos += buffer_size;
                 }
             } else {
                 float write_pos = static_cast<float>(buffer_->write_head());
                 secondary_pos = write_pos - secondary_delay;
                 if (buffer_size > 0.0f) {
-                    secondary_pos = std::fmod(secondary_pos, buffer_size);
-                    if (secondary_pos < 0.0f) secondary_pos += buffer_size;
+                    while (secondary_pos >= buffer_size) secondary_pos -= buffer_size;
+                    while (secondary_pos < 0.0f) secondary_pos += buffer_size;
                 }
             }
 
-            float sec_l = buffer_->ReadHermite(0, secondary_pos);
-            float sec_r = buffer_->ReadHermite(1, secondary_pos);
+            float sec_l, sec_r;
+            buffer_->ReadHermiteStereo(secondary_pos, &sec_l, &sec_r);
 
             // Mix both taps with equal gain
             float primary_gain = 1.0f - secondary_mix * 0.5f;
@@ -331,7 +343,8 @@ void DelayEngine::Process(const BeadsParameters& params,
             }
 
             // Generate envelope waveform based on shape
-            float sine_env = 0.5f + 0.5f * std::sin(envelope_phase_ * kTwoPi);
+            // sin(x) = cos(x - pi/2), i.e. phase shifted by 0.25 in [0,1] range
+            float sine_env = 0.5f + 0.5f * CosLookup(envelope_phase_ - 0.25f);
 
             if (params.shape <= 0.5f) {
                 // 0.0 -> 0.5: blend from steady (1.0) to sine tremolo

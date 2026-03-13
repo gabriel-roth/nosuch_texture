@@ -1,5 +1,6 @@
 #include "grain.h"
 #include "../buffer/recording_buffer.h"
+#include "../util/cosine_table.h"
 #include "../util/dsp_utils.h"
 
 #include <cmath>
@@ -86,16 +87,18 @@ bool Grain::Process(const RecordingBuffer& buffer, float* out_l, float* out_r) {
     float env = ComputeEnvelope(envelope_phase_, shape_);
     envelope_phase_ += envelope_increment_;
 
-    // Read from recording buffer with Hermite interpolation.
-    float sample_l = buffer.ReadHermite(0, read_position_);
-    float sample_r = buffer.ReadHermite(1, read_position_);
+    // Read from recording buffer with linear interpolation.
+    // Linear is ~3x cheaper than Hermite (2 loads vs 4, no polynomial)
+    // and the quality difference is inaudible with many overlapping grains.
+    float sample_l, sample_r;
+    buffer.ReadLinearStereoFast(read_position_, &sample_l, &sample_r);
 
     // Advance read position, wrapping around buffer size.
     read_position_ += phase_increment_;
     float buf_size = static_cast<float>(buffer.size());
     if (buf_size > 0.0f) {
-        read_position_ = std::fmod(read_position_, buf_size);
-        if (read_position_ < 0.0f) read_position_ += buf_size;
+        while (read_position_ >= buf_size) read_position_ -= buf_size;
+        while (read_position_ < 0.0f) read_position_ += buf_size;
     }
 
     // Apply steal fade-out if active.
@@ -175,7 +178,7 @@ float Grain::ComputeEnvelope(float phase, float shape) {
     trap = Clamp(trap, 0.0f, 1.0f);
 
     // Hann window: 0.5 - 0.5 * cos(2*pi*phase)
-    float hann = 0.5f - 0.5f * std::cos(kTwoPi * phase);
+    float hann = 0.5f - 0.5f * CosLookup(phase);
 
     // Blend between trapezoidal and Hann based on smoothness.
     return Crossfade(trap, hann, smoothness);

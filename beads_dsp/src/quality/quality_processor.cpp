@@ -50,6 +50,7 @@ StereoFrame QualityProcessor::ProcessInput(StereoFrame input, QualityMode mode) 
     float cutoff_hz;
     switch (mode) {
         case QualityMode::kClouds:    cutoff_hz = kCloudsInputLpHz; break;
+        case QualityMode::kCleanLoFi: cutoff_hz = kCleanLoFiInputLpHz; break;
         case QualityMode::kTape:      cutoff_hz = kTapeLpHz; break;
         default:                      cutoff_hz = kCloudsInputLpHz; break;  // Nyquist-ish passthrough
     }
@@ -61,9 +62,13 @@ StereoFrame QualityProcessor::ProcessInput(StereoFrame input, QualityMode mode) 
     StereoFrame result;
     switch (mode) {
         case QualityMode::kHiFi:
-        case QualityMode::kCleanLoFi:
             // No input degradation — use unfiltered signal
             result = input;
+            break;
+
+        case QualityMode::kCleanLoFi:
+            // Anti-aliasing LP for 8x decimation (effective Nyquist = 3 kHz)
+            result = { filtered_l, filtered_r };
             break;
 
         case QualityMode::kClouds:

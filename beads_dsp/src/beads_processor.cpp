@@ -62,6 +62,10 @@ void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
     impl_->reverb.Init(reinterpret_cast<float*>(ptr), kReverbBufferSize, sample_rate);
     ptr += AlignUp(kReverbBufferSize * sizeof(float));
 
+    // Set initial decimation factor (HiFi = 1x, no change from current behavior)
+    impl_->recording_buffer.SetDecimationFactor(
+        DecimationFactorForQuality(QualityMode::kHiFi));
+
     // Initialize sub-processors
     impl_->grain_engine.Init(sample_rate, &impl_->recording_buffer);
     impl_->delay_engine.Init(sample_rate, &impl_->recording_buffer);
@@ -87,6 +91,14 @@ void BeadsProcessor::SetWavetableProvider(WavetableProvider* provider) {
 void BeadsProcessor::SetParameters(const BeadsParameters& params) {
     if (!impl_) return;
     impl_->params = params;
+
+    // Detect quality mode change → update decimation factor + start wet duck
+    if (params.quality_mode != impl_->prev_quality_mode) {
+        impl_->prev_quality_mode = params.quality_mode;
+        impl_->recording_buffer.SetDecimationFactor(
+            DecimationFactorForQuality(params.quality_mode));
+        impl_->quality_xfade_counter = Impl::kQualityXfadeSamples;
+    }
 
     bool new_delay_mode = (params.size >= 1.0f);
     if (new_delay_mode != impl_->delay_mode) {
@@ -124,6 +136,10 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
     // Detect freeze transitions for crossfade
     if (s.params.freeze != s.prev_freeze) {
         s.recording_buffer.StartFreezeCrossfade();
+        // Flush the decimation accumulator so stale partial samples from
+        // before freeze don't contaminate the first frame written after
+        // unfreeze (or linger unused while frozen).
+        s.recording_buffer.ResetAccumulator();
         s.prev_freeze = s.params.freeze;
     }
 
@@ -187,10 +203,10 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
     }
 
     // --- Block-based wet signal generation + output processing (steps 5-10) ---
-    // Process in blocks of kMaxBlockSize to avoid stack overflow when
-    // num_frames > kMaxBlockSize.
-    StereoFrame wet[kMaxBlockSize];
-    StereoFrame wet_alt[kMaxBlockSize];  // For mode crossfade: the outgoing engine
+    // Process in blocks of kMaxBlockSize.
+    // wet/wet_alt live in Impl (DRAM) to keep audio-thread stack usage low.
+    StereoFrame* wet = s.wet_buf;
+    StereoFrame* wet_alt = s.wet_alt_buf;
     size_t remaining = num_frames;
     size_t offset = 0;
 
@@ -238,11 +254,31 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
                 wet_frame = wet[i];
             }
 
+            // Quality mode transition: V-shaped duck on wet signal
+            if (s.quality_xfade_counter > 0) {
+                float phase = 1.0f - static_cast<float>(s.quality_xfade_counter)
+                            / static_cast<float>(Impl::kQualityXfadeSamples);
+                // phase: 0 at start → 1 at end
+                float duck;
+                if (phase < 0.5f) {
+                    duck = 1.0f - phase * 2.0f;   // 1 → 0
+                } else {
+                    duck = (phase - 0.5f) * 2.0f;  // 0 → 1
+                }
+                wet_frame *= duck;
+                s.quality_xfade_counter--;
+            }
+
             // 6. Quality output processing
             wet_frame = s.quality_processor.ProcessOutput(wet_frame, s.params.quality_mode);
 
             // 7. Capture feedback sample (before reverb)
-            s.feedback_sample = wet_frame;
+            // Guard against NaN/inf poisoning the feedback loop permanently
+            if (std::isfinite(wet_frame.l) && std::isfinite(wet_frame.r)) {
+                s.feedback_sample = wet_frame;
+            } else {
+                s.feedback_sample = {0.0f, 0.0f};
+            }
 
             // 8. Dry/wet crossfade (equal-power) -- smoothed to avoid zipper noise
             ONE_POLE(s.smoothed_dry_wet, s.params.dry_wet, 0.002f);

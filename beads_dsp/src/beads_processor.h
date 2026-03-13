@@ -43,6 +43,11 @@ struct BeadsProcessor::Impl {
     // Previous freeze state for crossfade detection
     bool prev_freeze = false;
 
+    // Quality mode transition
+    QualityMode prev_quality_mode = QualityMode::kHiFi;
+    static constexpr int kQualityXfadeSamples = 4096;  // ~85ms at 48kHz
+    int quality_xfade_counter = 0;
+
     // Delay mode flag
     bool delay_mode = false;
 
@@ -58,6 +63,11 @@ struct BeadsProcessor::Impl {
     // Wavetable fade-in/out
     static constexpr int kWavetableXfadeSamples = 256;
     float wavetable_fade = 0.0f;      // 0 = inactive, 1 = fully active
+
+    // Work buffers for Process() — moved here from the stack to avoid
+    // overflowing the audio-thread stack on constrained targets (e.g. NT).
+    StereoFrame wet_buf[kMaxBlockSize];
+    StereoFrame wet_alt_buf[kMaxBlockSize];
 
     static constexpr size_t kAlignment = 16;
 };

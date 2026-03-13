@@ -27,14 +27,38 @@ public:
     // the interpolation.
     float ReadHermite(int channel, float position) const;
 
+    // Read both channels with Hermite interpolation in a single call.
+    // Computes indices once for both channels (saves redundant wrapping
+    // and index arithmetic compared to two separate ReadHermite calls).
+    void ReadHermiteStereo(float position, float* out_l, float* out_r) const;
+
     // Read a single channel with linear interpolation (cheaper).
     float ReadLinear(int channel, float position) const;
+
+    // Fast stereo linear interpolation for per-grain hot loops.
+    // Precondition: position must be finite and in [0, size_).
+    // No guards or wrapping — caller must ensure validity.
+    // ~3x cheaper than ReadHermiteStereo (2 loads vs 4, no polynomial).
+    inline void ReadLinearStereoFast(float position, float* out_l, float* out_r) const {
+        int pos_int = static_cast<int>(position);
+        float frac = position - static_cast<float>(pos_int);
+        size_t i0 = static_cast<size_t>(pos_int);
+        size_t i1 = i0 + 1;  // tail guarantees valid data at size_
+        const float* p0 = &buffer_[i0 * channels_];
+        const float* p1 = &buffer_[i1 * channels_];
+        *out_l = p0[0] + frac * (p1[0] - p0[0]);
+        *out_r = p0[1] + frac * (p1[1] - p0[1]);
+    }
 
     // Freeze-transition crossfade.  Call StartFreezeCrossfade() when the
     // freeze state changes, then call ProcessFreezeCrossfade() once per
     // sample during the fade.
     void StartFreezeCrossfade();
     void ProcessFreezeCrossfade();
+
+    void SetDecimationFactor(int factor);
+    void ResetAccumulator();
+    int decimation_factor() const { return decimation_factor_; }
 
     size_t size() const { return size_; }
     size_t write_head() const { return write_head_; }
@@ -56,6 +80,12 @@ private:
     size_t size_ = 0;           // Number of frames (not samples)
     int channels_ = 2;
     size_t write_head_ = 0;
+
+    // Decimation state
+    int decimation_factor_ = 1;
+    int decimation_counter_ = 0;
+    float accum_l_ = 0.0f;
+    float accum_r_ = 0.0f;
 
     // Freeze crossfade state
     bool crossfading_ = false;

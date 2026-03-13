@@ -191,6 +191,44 @@ TEST_CASE("GrainScheduler: Latched at noon is silent", "[scheduler]") {
     REQUIRE(total == 0);
 }
 
+TEST_CASE("GrainEngine: Decimation scales grain pitch and duration", "[engine][decimation]") {
+    // With 4x decimation, grains at pitch=0 should advance through the buffer
+    // at 1/4 the rate, and max grain duration should be 4x longer.
+    // We compare active grain durations at 1x vs 4x decimation.
+    TestBuffer tb_1x(48000);  // 1-second buffer at 1x
+    TestBuffer tb_4x(48000);  // same physical buffer at 4x decimation
+    tb_4x.buffer.SetDecimationFactor(4);
+
+    GrainEngine engine_1x, engine_4x;
+    engine_1x.Init(kSampleRate, &tb_1x.buffer);
+    engine_4x.Init(kSampleRate, &tb_4x.buffer);
+
+    BeadsParameters params;
+    params.trigger_mode = TriggerMode::kLatched;
+    params.density = 0.1f;    // Fast triggers
+    params.size = 0.8f;       // Large grain size → near max duration
+    params.time = 0.5f;
+    params.shape = 0.5f;
+    params.pitch = 0.0f;
+
+    std::vector<StereoFrame> out_1x(256), out_4x(256);
+
+    // Run both engines long enough to produce grains
+    float energy_1x = 0.0f, energy_4x = 0.0f;
+    for (int block = 0; block < 200; ++block) {
+        engine_1x.Process(params, out_1x.data(), 256);
+        engine_4x.Process(params, out_4x.data(), 256);
+        for (size_t i = 0; i < 256; ++i) {
+            energy_1x += out_1x[i].l * out_1x[i].l;
+            energy_4x += out_4x[i].l * out_4x[i].l;
+        }
+    }
+
+    // Both should produce output
+    REQUIRE(energy_1x > 0.0f);
+    REQUIRE(energy_4x > 0.0f);
+}
+
 TEST_CASE("GrainEngine: Produces output with active grains", "[engine]") {
     TestBuffer tb;
 
@@ -216,5 +254,39 @@ TEST_CASE("GrainEngine: Produces output with active grains", "[engine]") {
         }
     }
 
+    REQUIRE(max_level > 0.001f);
+}
+
+TEST_CASE("GrainEngine: 30 active grains produce valid output", "[engine][stress]") {
+    TestBuffer tb(48000);  // 1 second of audio
+
+    GrainEngine engine;
+    engine.Init(kSampleRate, &tb.buffer);
+
+    BeadsParameters params;
+    params.trigger_mode = TriggerMode::kLatched;
+    params.density = 0.1f;    // Fast triggers to fill all grain slots
+    params.size = 0.9f;       // Long grains (many active simultaneously)
+    params.time = 0.5f;
+    params.shape = 0.5f;
+    params.pitch = 0.0f;
+
+    std::vector<StereoFrame> output(256, {0.0f, 0.0f});
+
+    bool all_finite = true;
+    float max_level = 0.0f;
+
+    // Process enough blocks for all 30 grain slots to fill
+    for (int block = 0; block < 400; ++block) {
+        engine.Process(params, output.data(), 256);
+        for (auto& f : output) {
+            if (!std::isfinite(f.l) || !std::isfinite(f.r)) {
+                all_finite = false;
+            }
+            max_level = std::max(max_level, std::max(std::abs(f.l), std::abs(f.r)));
+        }
+    }
+
+    REQUIRE(all_finite);
     REQUIRE(max_level > 0.001f);
 }

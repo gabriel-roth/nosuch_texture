@@ -12,6 +12,10 @@ void RecordingBuffer::Init(float* buffer, size_t num_frames, int num_channels) {
     size_ = num_frames;
     channels_ = num_channels;
     write_head_ = 0;
+    decimation_factor_ = 1;
+    decimation_counter_ = 0;
+    accum_l_ = 0.0f;
+    accum_r_ = 0.0f;
     crossfading_ = false;
     crossfade_counter_ = 0;
 
@@ -28,9 +32,26 @@ void RecordingBuffer::Init(float* buffer, size_t num_frames, int num_channels) {
 void RecordingBuffer::Write(float left, float right) {
     if (size_ == 0 || !buffer_ || channels_ < 2) return;
 
+    // Accumulate samples for decimation
+    accum_l_ += left;
+    accum_r_ += right;
+    decimation_counter_++;
+
+    if (decimation_counter_ < decimation_factor_) return;
+
+    // Write averaged sample
+    float inv_factor = 1.0f / static_cast<float>(decimation_factor_);
+    float avg_l = accum_l_ * inv_factor;
+    float avg_r = accum_r_ * inv_factor;
+
+    // Reset accumulator
+    accum_l_ = 0.0f;
+    accum_r_ = 0.0f;
+    decimation_counter_ = 0;
+
     size_t idx = write_head_ * channels_;
-    buffer_[idx] = left;
-    buffer_[idx + 1] = right;
+    buffer_[idx] = avg_l;
+    buffer_[idx + 1] = avg_r;
 
     // Keep the tail in sync when writing into the first kInterpolationTail
     // frames.
@@ -46,6 +67,20 @@ void RecordingBuffer::Write(float left, float right) {
 
 void RecordingBuffer::Write(const StereoFrame& frame) {
     Write(frame.l, frame.r);
+}
+
+void RecordingBuffer::SetDecimationFactor(int factor) {
+    if (factor < 1) factor = 1;
+    decimation_factor_ = factor;
+    decimation_counter_ = 0;
+    accum_l_ = 0.0f;
+    accum_r_ = 0.0f;
+}
+
+void RecordingBuffer::ResetAccumulator() {
+    decimation_counter_ = 0;
+    accum_l_ = 0.0f;
+    accum_r_ = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,10 +110,11 @@ float RecordingBuffer::ReadHermite(int channel, float position) const {
     // Guard against NaN (which would cause infinite loops below).
     if (std::isnan(position)) return 0.0f;
 
-    // Wrap position into [0, size_) using fmod for safety.
+    // Wrap position into [0, size_). Callers pre-wrap positions so these
+    // loops execute 0-1 times. NaN is caught by the isnan guard above.
     float size_f = static_cast<float>(size_);
-    position = std::fmod(position, size_f);
-    if (position < 0.0f) position += size_f;
+    while (position >= size_f) position -= size_f;
+    while (position < 0.0f) position += size_f;
 
     // Integer and fractional parts.
     int pos_int = static_cast<int>(position);
@@ -110,6 +146,48 @@ float RecordingBuffer::ReadHermite(int channel, float position) const {
 }
 
 // ---------------------------------------------------------------------------
+// ReadHermiteStereo
+// ---------------------------------------------------------------------------
+
+void RecordingBuffer::ReadHermiteStereo(float position, float* out_l, float* out_r) const {
+    if (size_ == 0 || !buffer_ || channels_ < 2) {
+        *out_l = 0.0f;
+        *out_r = 0.0f;
+        return;
+    }
+
+    if (std::isnan(position)) {
+        *out_l = 0.0f;
+        *out_r = 0.0f;
+        return;
+    }
+
+    float size_f = static_cast<float>(size_);
+    while (position >= size_f) position -= size_f;
+    while (position < 0.0f) position += size_f;
+
+    int pos_int = static_cast<int>(position);
+    float frac = position - static_cast<float>(pos_int);
+
+    size_t i0 = static_cast<size_t>(pos_int);
+    size_t i_1 = (i0 == 0) ? size_ - 1 : i0 - 1;
+    size_t i1 = i0 + 1;
+    size_t i2 = i0 + 2;
+
+    if (i1 >= size_ + kInterpolationTail) i1 -= size_;
+    if (i2 >= size_ + kInterpolationTail) i2 -= size_;
+
+    // Read both channels from interleaved buffer, sharing index computation.
+    const float* p_1 = &buffer_[i_1 * channels_];
+    const float* p0  = &buffer_[i0  * channels_];
+    const float* p1  = &buffer_[i1  * channels_];
+    const float* p2  = &buffer_[i2  * channels_];
+
+    *out_l = InterpolateHermite(p_1[0], p0[0], p1[0], p2[0], frac);
+    *out_r = InterpolateHermite(p_1[1], p0[1], p1[1], p2[1], frac);
+}
+
+// ---------------------------------------------------------------------------
 // ReadLinear
 // ---------------------------------------------------------------------------
 
@@ -119,10 +197,11 @@ float RecordingBuffer::ReadLinear(int channel, float position) const {
     // Guard against NaN (which would cause infinite loops below).
     if (std::isnan(position)) return 0.0f;
 
-    // Wrap position into [0, size_) using fmod for safety.
+    // Wrap position into [0, size_). Callers pre-wrap positions so these
+    // loops execute 0-1 times. NaN is caught by the isnan guard above.
     float size_f = static_cast<float>(size_);
-    position = std::fmod(position, size_f);
-    if (position < 0.0f) position += size_f;
+    while (position >= size_f) position -= size_f;
+    while (position < 0.0f) position += size_f;
 
     int pos_int = static_cast<int>(position);
     float frac = position - static_cast<float>(pos_int);

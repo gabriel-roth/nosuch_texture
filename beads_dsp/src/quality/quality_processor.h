@@ -58,9 +58,10 @@ private:
     static constexpr float kWowSemitones = 0.02f;
     static constexpr float kFlutterSemitones = 0.003f;
 
-    static constexpr float kCloudsInputLpHz  = 14000.0f;
-    static constexpr float kCleanLoFiLpHz    = 10000.0f;
-    static constexpr float kTapeLpHz         = 10000.0f;
+    static constexpr float kCloudsInputLpHz    = 10000.0f;
+    static constexpr float kCleanLoFiLpHz      = 10000.0f;
+    static constexpr float kCleanLoFiInputLpHz = 2500.0f;
+    static constexpr float kTapeLpHz           = 5000.0f;
 
     // 12-bit quantization scale (2^11 = 2048)
     static constexpr float kQuantScale = 2048.0f;

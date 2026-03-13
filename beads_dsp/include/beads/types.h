@@ -34,6 +34,16 @@ enum class QualityMode : uint8_t {
     kTape = 3
 };
 
+inline int DecimationFactorForQuality(QualityMode mode) {
+    switch (mode) {
+        case QualityMode::kHiFi:      return 1;
+        case QualityMode::kClouds:    return 2;
+        case QualityMode::kCleanLoFi: return 8;
+        case QualityMode::kTape:      return 4;
+    }
+    return 1;
+}
+
 enum class TriggerMode : uint8_t {
     kLatched = 0,
     kGated = 1,
@@ -44,7 +54,7 @@ enum class TriggerMode : uint8_t {
 static constexpr int kMaxGrains = 30;
 
 // Default recording buffer duration in seconds
-static constexpr float kDefaultBufferDuration = 4.0f;
+static constexpr float kDefaultBufferDuration = 2.0f;
 
 // Reverb delay memory size (12 partitioned delay lines, ~12K samples needed)
 static constexpr size_t kReverbBufferSize = 16384;
