@@ -103,7 +103,16 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     float mod_pitch = ar_pitch_.Process(params.pitch, params.pitch_ar,
                                          params.pitch_cv, params.pitch_cv_connected);
     gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_ / df_f;
-    if (reverse) gp.pitch_ratio = -gp.pitch_ratio;
+    if (reverse) {
+        gp.pitch_ratio = -gp.pitch_ratio;
+        // Offset start position to the END of the segment a forward grain
+        // would play.  The reverse grain then reads backwards through the
+        // same audio, producing true reversed playback of the intended
+        // segment rather than reading into unrelated older audio.
+        float span = gp.size * std::fabs(gp.pitch_ratio);
+        gp.position += span;
+        while (gp.position >= buf_size_f) gp.position -= buf_size_f;
+    }
 
     // --- SHAPE → envelope shape ---
     float mod_shape = ar_shape_.Process(params.shape, params.shape_ar,
@@ -169,15 +178,17 @@ void GrainEngine::Process(const BeadsParameters& params,
     }
 
     // --- Overlap normalization ---
+    // Run ONE_POLE per-sample to maintain the same time constant as before
+    // the grain-major restructuring.
     float count_f = static_cast<float>(active_count);
-    ONE_POLE(overlap_count_lp_, count_f, 0.01f);
-
-    float norm = 1.0f;
-    if (overlap_count_lp_ > 1.0f) {
-        norm = 1.0f / std::sqrt(overlap_count_lp_);
-    }
-
     for (size_t i = 0; i < num_frames; ++i) {
+        ONE_POLE(overlap_count_lp_, count_f, 0.01f);
+
+        float norm = 1.0f;
+        if (overlap_count_lp_ > 1.0f) {
+            norm = 1.0f / std::sqrt(overlap_count_lp_);
+        }
+
         output[i].l *= norm;
         output[i].r *= norm;
     }

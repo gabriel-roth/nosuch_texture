@@ -75,13 +75,17 @@ static const float kCosineTable[kCosineTableSize + 1] = {
 };
 
 // Fast cosine approximation via table lookup with linear interpolation.
-// Input: phase in [0, 1] representing one full period [0, 2pi].
+// Input: phase representing one full period [0, 2pi]. Any value is accepted;
+// negative and >1 inputs are wrapped via bitmask.
 // Cost: ~5 instructions vs ~80 for std::cos().
 inline float CosLookup(float phase_0_to_1) {
+    // Floor to get correct interpolation for negative inputs.
+    // static_cast<int> truncates toward zero, giving wrong frac for negatives.
     float idx = phase_0_to_1 * kCosineTableSize;
-    int i = static_cast<int>(idx);
-    float frac = idx - static_cast<float>(i);
-    i &= (kCosineTableSize - 1);  // mask wrap (power of 2)
+    float fi = (idx >= 0.0f) ? static_cast<float>(static_cast<int>(idx))
+                              : static_cast<float>(static_cast<int>(idx) - 1);
+    float frac = idx - fi;
+    int i = static_cast<int>(fi) & (kCosineTableSize - 1);
     return kCosineTable[i] + frac * (kCosineTable[i + 1] - kCosineTable[i]);
 }
 

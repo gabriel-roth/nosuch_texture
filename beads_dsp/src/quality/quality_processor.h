@@ -11,10 +11,9 @@ namespace beads {
 //
 // Quality mode processing:
 //   HiFi:      No degradation, pass-through.
-//   Clouds:    LP at ~14kHz input.  12-bit quantization on output
-//              (multiply by 2048, round, divide by 2048).
-//   CleanLoFi: LP at ~10kHz on wet path only (dry bypasses).  No quantization.
-//   Tape:      LP at ~10kHz.  Mono sum.  Gentle mu-law transfer curve (mu=64).
+//   Clouds:    LP at ~10kHz input.  12-bit quantization on output.
+//   CleanLoFi: LP at ~2.5kHz input + ~10kHz output.  No quantization.
+//   Tape:      LP at ~5kHz.  Mono sum.  Gentle mu-law transfer curve (mu=64).
 //              Wow LFO (~0.5 Hz, +/-0.02 semitones) +
 //              flutter LFO (~6 Hz, +/-0.003 semitones).
 class QualityProcessor {

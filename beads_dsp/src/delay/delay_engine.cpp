@@ -303,8 +303,10 @@ void DelayEngine::Process(const BeadsParameters& params,
                 // In freeze mode, secondary tap also reads from the loop
                 float sec_offset = secondary_delay;
                 if (loop_length_ > 0.0f) {
-                    while (sec_offset >= loop_length_) sec_offset -= loop_length_;
-                    while (sec_offset < 0.0f) sec_offset += loop_length_;
+                    // Use fmod here: secondary_delay can be many multiples of
+                    // loop_length_ (e.g. 800x), so while-loops would be too slow.
+                    sec_offset = std::fmod(sec_offset, loop_length_);
+                    if (sec_offset < 0.0f) sec_offset += loop_length_;
                 }
                 secondary_pos = loop_start_ + sec_offset;
                 if (buffer_size > 0.0f) {

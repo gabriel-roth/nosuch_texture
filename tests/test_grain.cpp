@@ -229,6 +229,115 @@ TEST_CASE("GrainEngine: Decimation scales grain pitch and duration", "[engine][d
     REQUIRE(energy_4x > 0.0f);
 }
 
+TEST_CASE("Grain: Reverse playback reads buffer backwards", "[grain]") {
+    // Fill buffer with a ramp so each position has a unique value.
+    size_t num_frames = 4800;
+    size_t bytes = (num_frames + kInterpolationTail) * 2 * sizeof(float);
+    std::vector<uint8_t> memory(bytes, 0);
+    RecordingBuffer buffer;
+    buffer.Init(reinterpret_cast<float*>(memory.data()), num_frames, 2);
+
+    for (size_t i = 0; i < num_frames; ++i) {
+        float val = static_cast<float>(i) / static_cast<float>(num_frames);
+        buffer.Write(val, val);
+    }
+
+    float grain_size = 1000.0f;
+    float start_pos = 1000.0f;
+
+    // Forward grain: reads buffer[1000..1999] with forward envelope.
+    Grain fwd;
+    fwd.Init();
+    Grain::GrainParameters fwd_params;
+    fwd_params.position = start_pos;
+    fwd_params.size = grain_size;
+    fwd_params.pitch_ratio = 1.0f;
+    fwd_params.shape = 0.0f;  // Symmetric triangle envelope
+    fwd_params.pan = 0.0f;
+    fwd_params.pre_delay = 0;
+    fwd.Start(fwd_params);
+
+    std::vector<float> fwd_samples;
+    float out_l, out_r;
+    while (fwd.Process(buffer, &out_l, &out_r)) {
+        fwd_samples.push_back(out_l);
+    }
+
+    // Reverse grain: starts at start_pos + span, reads backward through
+    // the same segment.  Same symmetric envelope applied forward.
+    Grain rev;
+    rev.Init();
+    Grain::GrainParameters rev_params;
+    rev_params.position = start_pos + grain_size;  // end of forward segment
+    rev_params.size = grain_size;
+    rev_params.pitch_ratio = -1.0f;
+    rev_params.shape = 0.0f;
+    rev_params.pan = 0.0f;
+    rev_params.pre_delay = 0;
+    rev.Start(rev_params);
+
+    std::vector<float> rev_samples;
+    while (rev.Process(buffer, &out_l, &out_r)) {
+        rev_samples.push_back(out_l);
+    }
+
+    REQUIRE(fwd_samples.size() == rev_samples.size());
+    size_t n = fwd_samples.size();
+    REQUIRE(n > 0);
+
+    // With a symmetric envelope (shape=0, slope=0.5), env(phase) = env(1-phase).
+    // If the reverse grain truly reads the same segment backwards:
+    //   forward[i] = ramp(start + i) * env(i/n)
+    //   reverse[n-1-i] ≈ ramp(start + i + 1) * env(i/n)   [off-by-one]
+    // These should be approximately equal.  Check the middle region where
+    // envelope values are large enough for meaningful comparison.
+    size_t start = n / 4;
+    size_t end = 3 * n / 4;
+    int matches = 0, total = 0;
+    for (size_t i = start; i < end; ++i) {
+        size_t j = n - 1 - i;
+        if (std::abs(fwd_samples[i]) > 0.001f && std::abs(rev_samples[j]) > 0.001f) {
+            float ratio = fwd_samples[i] / rev_samples[j];
+            if (ratio > 0.95f && ratio < 1.05f) ++matches;
+            ++total;
+        }
+    }
+    REQUIRE(total > 0);
+    REQUIRE(matches > total * 9 / 10);
+}
+
+TEST_CASE("GrainEngine: Negative SIZE produces reverse output", "[engine]") {
+    TestBuffer tb(48000);
+
+    GrainEngine engine;
+    engine.Init(kSampleRate, &tb.buffer);
+
+    BeadsParameters params;
+    params.trigger_mode = TriggerMode::kLatched;
+    params.density = 0.1f;
+    params.size = -0.5f;  // Negative = reverse grains
+    params.time = 0.5f;
+    params.shape = 0.5f;
+    params.pitch = 0.0f;
+
+    std::vector<StereoFrame> output(256, {0.0f, 0.0f});
+
+    bool all_finite = true;
+    float max_level = 0.0f;
+
+    for (int block = 0; block < 200; ++block) {
+        engine.Process(params, output.data(), 256);
+        for (auto& f : output) {
+            if (!std::isfinite(f.l) || !std::isfinite(f.r)) all_finite = false;
+            max_level = std::max(max_level,
+                std::max(std::abs(f.l), std::abs(f.r)));
+        }
+    }
+
+    REQUIRE(all_finite);
+    REQUIRE(max_level > 0.001f);
+}
+
 TEST_CASE("GrainEngine: Produces output with active grains", "[engine]") {
     TestBuffer tb;
 
