@@ -24,7 +24,7 @@ private:
     float attack_coeff_ = 0.0f;     // Fast attack
     float release_coeff_ = 0.0f;    // 5s release
 
-    static constexpr float kMinGainDb = 0.0f;
+    static constexpr float kMinGainDb = -60.0f;
     static constexpr float kMaxGainDb = 32.0f;
 };
 
