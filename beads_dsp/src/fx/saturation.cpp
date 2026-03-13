@@ -72,10 +72,13 @@ float Saturation::LimitFeedback(float input, QualityMode mode) {
             return AsymmetricSoftClip(input * 0.9f);
 
         case QualityMode::kTape:
-            // Mu-law keeps feedback warm and saturated.
-            // Pre-clamp input so output stays in [-1, 1] (mu-law
-            // output exceeds unity for |input| > 1).
-            return MuLawCompress(Clamp(input, -1.0f, 1.0f), 32.0f);
+            // The signal is already mu-law compressed (mu=64) from
+            // ProcessInput.  A second MuLawCompress here with a
+            // different mu creates a compress/expand mismatch that
+            // adds ~62% gain per feedback cycle.  Hard clip instead:
+            // the compressed signal is already in [-1,1], so clipping
+            // only activates when feedback injection pushes it over.
+            return HardClip(input, 1.0f);
     }
     return input;
 }

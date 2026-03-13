@@ -5,6 +5,7 @@
 
 #include "beads/types.h"
 #include "quality/quality_processor.h"
+#include "fx/saturation.h"
 
 using namespace beads;
 using Catch::Approx;
@@ -146,6 +147,87 @@ TEST_CASE("QualityModes: CleanLoFi output LP attenuates high frequencies", "[qua
     REQUIRE(lofi_energy < hifi_energy * 0.5f);
 }
 
+TEST_CASE("QualityModes: Tape wow/flutter does not pump amplitude", "[quality]") {
+    QualityProcessor qp;
+    qp.Init(kSampleRate);
+
+    // Run for 4+ seconds (multiple full wow LFO cycles at 0.5Hz)
+    const int total_samples = static_cast<int>(kSampleRate * 4.5f);
+    const int settle_samples = static_cast<int>(kSampleRate * 0.5f);
+    const int window_samples = static_cast<int>(kSampleRate * 0.1f);  // 100ms windows
+
+    // Feed constant-amplitude 440Hz sine through ProcessInput -> ProcessOutput
+    std::vector<float> output_samples;
+    output_samples.reserve(total_samples);
+
+    for (int i = 0; i < total_samples; ++i) {
+        float val = 0.5f * std::sin(static_cast<float>(i) / kSampleRate * 440.0f * 2.0f * kPi);
+        StereoFrame in = {val, val};
+        StereoFrame processed = qp.ProcessInput(in, QualityMode::kTape);
+        StereoFrame out = qp.ProcessOutput(processed, QualityMode::kTape);
+        output_samples.push_back(out.l);
+    }
+
+    // Measure RMS in consecutive 100ms windows after settling
+    float min_rms = 1e10f;
+    float max_rms = 0.0f;
+
+    for (int start = settle_samples; start + window_samples <= total_samples; start += window_samples) {
+        float sum_sq = 0.0f;
+        for (int j = start; j < start + window_samples; ++j) {
+            sum_sq += output_samples[j] * output_samples[j];
+        }
+        float rms = std::sqrt(sum_sq / static_cast<float>(window_samples));
+        if (rms < min_rms) min_rms = rms;
+        if (rms > max_rms) max_rms = rms;
+    }
+
+    // Less than 5% amplitude variation across all windows
+    REQUIRE(min_rms > 0.0f);
+    REQUIRE(max_rms / min_rms < 1.05f);
+}
+
+TEST_CASE("QualityModes: Tape pitch modulation ratio stays within tight range", "[quality]") {
+    QualityProcessor qp;
+    qp.Init(kSampleRate);
+
+    // Run for 2 seconds (one full wow cycle at 0.5Hz)
+    const int total_samples = 96000;
+    float min_ratio = 2.0f;
+    float max_ratio = 0.0f;
+
+    for (int i = 0; i < total_samples; ++i) {
+        float ratio = qp.GetPitchModulation(QualityMode::kTape, 1);
+        if (ratio < min_ratio) min_ratio = ratio;
+        if (ratio > max_ratio) max_ratio = ratio;
+    }
+
+    // ±0.023 semitones combined ≈ ±0.13% ratio deviation
+    REQUIRE(min_ratio >= 0.998f);
+    REQUIRE(max_ratio <= 1.002f);
+}
+
+TEST_CASE("QualityModes: Tape ProcessInput/ProcessOutput roundtrip preserves amplitude", "[quality]") {
+    QualityProcessor qp;
+    qp.Init(kSampleRate);
+
+    const int total_samples = 5000;
+    const int settle_samples = 1000;
+
+    for (int i = 0; i < total_samples; ++i) {
+        StereoFrame in = {0.5f, 0.5f};
+        StereoFrame processed = qp.ProcessInput(in, QualityMode::kTape);
+        StereoFrame out = qp.ProcessOutput(processed, QualityMode::kTape);
+
+        if (i >= settle_samples) {
+            REQUIRE(out.l >= 0.3f);
+            REQUIRE(out.l <= 0.7f);
+            REQUIRE(out.r >= 0.3f);
+            REQUIRE(out.r <= 0.7f);
+        }
+    }
+}
+
 TEST_CASE("QualityModes: Mode crossfade produces smooth transition", "[quality]") {
     QualityProcessor qp;
     qp.Init(kSampleRate);
@@ -170,4 +252,72 @@ TEST_CASE("QualityModes: Mode crossfade produces smooth transition", "[quality]"
 
     // The crossfade should prevent a large jump at the mode switch
     REQUIRE(max_delta < 0.1f);
+}
+
+TEST_CASE("QualityModes: Tape LimitFeedback does not create gain in compress/expand roundtrip", "[quality]") {
+    QualityProcessor qp;
+    qp.Init(kSampleRate);
+
+    Saturation sat;
+    sat.Init();
+
+    // Simulate the Tape feedback path:
+    // ProcessInput(compress 64) → LimitFeedback → buffer → ProcessOutput(expand 64)
+    // This roundtrip must not add gain.
+    float test_values[] = {0.1f, 0.3f, 0.5f, 0.7f, 0.9f, -0.3f, -0.7f};
+    for (float val : test_values) {
+        StereoFrame in = {val, val};
+        StereoFrame compressed = qp.ProcessInput(in, QualityMode::kTape);
+        StereoFrame limited = sat.LimitFeedback(compressed, QualityMode::kTape);
+        StereoFrame expanded = qp.ProcessOutput(limited, QualityMode::kTape);
+
+        // Output amplitude should not exceed input amplitude (no gain)
+        float input_amp = std::abs(val);
+        float output_amp = std::abs(expanded.l);
+        REQUIRE(output_amp <= input_amp * 1.1f);  // Allow 10% for filter transients
+    }
+}
+
+TEST_CASE("QualityModes: Tape feedback loop converges with low feedback", "[quality]") {
+    QualityProcessor qp;
+    qp.Init(kSampleRate);
+
+    Saturation sat;
+    sat.Init();
+
+    // Simulate the actual feedback loop sample-by-sample:
+    // input + feedback → ProcessInput → LimitFeedback → [buffer] → ProcessOutput → capture feedback
+    float feedback_gain = 0.1f * 0.1f;  // feedback param 0.1 squared (matches beads_processor)
+    StereoFrame feedback_sample = {0.0f, 0.0f};
+
+    // Run for 2 seconds with constant input
+    const int total_samples = 96000;
+    const int settle_samples = 24000;  // 0.5s settle for LP filters + mode crossfade
+    float max_output = 0.0f;
+
+    for (int i = 0; i < total_samples; ++i) {
+        float val = 0.5f * std::sin(static_cast<float>(i) / kSampleRate * 440.0f * 2.0f * kPi);
+        StereoFrame in = {val, val};
+
+        // Mix in feedback
+        in.l += feedback_sample.l * feedback_gain;
+        in.r += feedback_sample.r * feedback_gain;
+
+        // ProcessInput (compress)
+        StereoFrame compressed = qp.ProcessInput(in, QualityMode::kTape);
+        // LimitFeedback
+        StereoFrame limited = sat.LimitFeedback(compressed, QualityMode::kTape);
+        // ProcessOutput (expand) — simulates buffer readback
+        StereoFrame expanded = qp.ProcessOutput(limited, QualityMode::kTape);
+        // Capture feedback
+        feedback_sample = expanded;
+
+        if (i >= settle_samples) {
+            max_output = std::max(max_output, std::abs(expanded.l));
+        }
+    }
+
+    // With 0.5 amplitude input and 1% feedback gain, output should stay bounded
+    // and not grow beyond the input amplitude (no feedback-induced gain)
+    REQUIRE(max_output < 0.8f);  // Well below 1.0, reasonable for 0.5 input through mu-law
 }

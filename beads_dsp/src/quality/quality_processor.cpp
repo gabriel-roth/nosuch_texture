@@ -171,8 +171,8 @@ StereoFrame QualityProcessor::ProcessOutput(StereoFrame input, QualityMode mode)
 // GetPitchModulation: returns a pitch *ratio* multiplier for the current
 // sample.  Only tape mode produces modulation; all others return 1.0.
 //
-// Wow  = slow (~0.5 Hz), +/- 0.075 semitones
-// Flutter = fast (~6 Hz), +/- 0.012 semitones
+// Wow  = slow (~0.5 Hz), +/- 0.02 semitones
+// Flutter = fast (~6 Hz), +/- 0.003 semitones
 // ---------------------------------------------------------------------------
 float QualityProcessor::GetPitchModulation(QualityMode mode, size_t num_samples) {
     if (mode != QualityMode::kTape) {

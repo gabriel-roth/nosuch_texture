@@ -15,8 +15,8 @@ namespace beads {
 //              (multiply by 2048, round, divide by 2048).
 //   CleanLoFi: LP at ~10kHz on wet path only (dry bypasses).  No quantization.
 //   Tape:      LP at ~10kHz.  Mono sum.  Gentle mu-law transfer curve (mu=64).
-//              Wow LFO (~0.5 Hz, +/-0.075 semitones) +
-//              flutter LFO (~6 Hz, +/-0.012 semitones).
+//              Wow LFO (~0.5 Hz, +/-0.02 semitones) +
+//              flutter LFO (~6 Hz, +/-0.003 semitones).
 class QualityProcessor {
 public:
     void Init(float sample_rate);
@@ -55,8 +55,8 @@ private:
     // -- Constants --
     static constexpr float kWowHz = 0.5f;
     static constexpr float kFlutterHz = 6.0f;
-    static constexpr float kWowSemitones = 0.075f;
-    static constexpr float kFlutterSemitones = 0.012f;
+    static constexpr float kWowSemitones = 0.02f;
+    static constexpr float kFlutterSemitones = 0.003f;
 
     static constexpr float kCloudsInputLpHz  = 14000.0f;
     static constexpr float kCleanLoFiLpHz    = 10000.0f;
