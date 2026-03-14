@@ -1,4 +1,4 @@
-name: Build and Release Beads Plugin
+name: Build and Release No Such Texture Plugin
 
 on:
   push:
@@ -35,17 +35,17 @@ jobs:
 
       - name: Prepare release archive
         run: |
-          mkdir -p release/programs/plug-ins/nt_beads
-          cp NT/plugins/nt_beads.o release/programs/plug-ins/nt_beads/
+          mkdir -p release/programs/plug-ins/nosuch_texture
+          cp NT/plugins/nosuch_texture.o release/programs/plug-ins/nosuch_texture/
           cd release
-          zip -r ../nt_beads-plugin.zip programs
+          zip -r ../nosuch_texture-plugin.zip programs
           cd ..
           echo "Archive contents:"
-          unzip -l nt_beads-plugin.zip
+          unzip -l nosuch_texture-plugin.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: nt_beads-plugin.zip
+          files: nosuch_texture-plugin.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
