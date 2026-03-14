@@ -717,6 +717,9 @@ static bool draw(_NT_algorithm* self) {
     _beadsAlgorithm* alg = (_beadsAlgorithm*)self;
     const int16_t* v = alg->v;
 
+    // Top bar: plugin name
+    NT_drawText(128, 8, "No Such Texture", 15, kNT_textCentre, kNT_textTiny);
+
     // Row 12-23: Mode info + encoder params
     char buf[64];
 
@@ -800,8 +803,7 @@ static bool draw(_NT_algorithm* self) {
         NT_drawText(200, 52, "FROZEN", 15, kNT_textLeft, kNT_textTiny);
     }
 
-    // Return false to keep standard parameter display at top
-    return false;
+    return true;
 }
 
 // ============================================================================
@@ -809,8 +811,8 @@ static bool draw(_NT_algorithm* self) {
 // ============================================================================
 
 static const _NT_factory factory = {
-    .guid = NT_MULTICHAR('T', 'h', 'B', 'e'),
-    .name = "Beads",
+    .guid = NT_MULTICHAR('T', 'h', 'T', 'x'),
+    .name = "Texture",
     .description = "Granular texture synthesizer",
     .numSpecifications = 0,
     .specifications = NULL,
