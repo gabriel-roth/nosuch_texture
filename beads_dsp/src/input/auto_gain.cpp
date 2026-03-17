@@ -18,7 +18,7 @@ static inline float FastDbToGain(float db) {
 // 20 * log10(x) = 20 * ln(x) / ln(10) = ln(x) * 8.6858896381
 static inline float FastGainToDb(float gain) {
     if (gain < 1e-10f) return -200.0f;
-    return std::log(gain) * 8.6858896381f;
+    return logf(gain) * 8.6858896381f;
 }
 
 void AutoGain::Init(float sample_rate) {

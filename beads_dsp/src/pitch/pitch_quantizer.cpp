@@ -30,7 +30,10 @@ void PitchQuantizer::loadRatios(const double* ratios, uint32_t num_notes) noexce
 
   num_notes_ = num_notes;
   for (uint32_t i = 0; i < num_notes; ++i) {
-    log2_ratios_[i] = Log2(ratios[i]);
+    // Guard against zero/negative ratios from malformed SCL files
+    double r = ratios[i];
+    if (r < 1e-9) r = 1e-9;
+    log2_ratios_[i] = Log2(r);
   }
   log2_period_ = log2_ratios_[num_notes - 1];
   if (log2_period_ <= 0.0) log2_period_ = 1.0;  // safety
@@ -55,17 +58,21 @@ float PitchQuantizer::quantize(float v_oct) const noexcept {
   // Convert V/oct to ratio
   double ratio = std::pow(2.0, pitch);
 
-  // Normalize ratio into [1.0, period_ratio), tracking octave offset
+  // Normalize ratio into [1.0, period_ratio), tracking octave offset.
+  // Iteration bound prevents runaway loops with degenerate scales
+  // (e.g. period_ratio very close to 1.0).  128 iterations covers
+  // +-128 octaves which is far beyond any musically useful range.
   const double period_ratio = std::pow(2.0, log2_period_);
   int octave_offset = 0;
+  static constexpr int kMaxIter = 128;
 
   if (ratio < 1.0) {
-    while (ratio < 1.0) {
+    for (int iter = 0; iter < kMaxIter && ratio < 1.0; ++iter) {
       ratio *= period_ratio;
       octave_offset--;
     }
   } else if (ratio >= period_ratio) {
-    while (ratio >= period_ratio) {
+    for (int iter = 0; iter < kMaxIter && ratio >= period_ratio; ++iter) {
       ratio /= period_ratio;
       octave_offset++;
     }

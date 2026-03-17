@@ -61,7 +61,7 @@ public:
         float u = NextFloat();
         // Clamp to avoid log(0)
         if (u < 1e-7f) u = 1e-7f;
-        return -std::log(u);
+        return -logf(u);
     }
 
 private:

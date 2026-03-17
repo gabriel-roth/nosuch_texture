@@ -76,8 +76,8 @@ inline float MuLawCompress(float x, float mu = 255.0f) {
     float sign = x >= 0.0f ? 1.0f : -1.0f;
     // For mu=64 (tape mode): 1/log(65) = 0.23964..
     // Use precomputed value when mu=64 to avoid per-sample log()
-    float inv_log_1_plus_mu = (mu == 64.0f) ? 0.23964147646f : (1.0f / std::log(1.0f + mu));
-    return sign * std::log(1.0f + mu * abs_x) * inv_log_1_plus_mu;
+    float inv_log_1_plus_mu = (mu == 64.0f) ? 0.23964147646f : (1.0f / logf(1.0f + mu));
+    return sign * logf(1.0f + mu * abs_x) * inv_log_1_plus_mu;
 }
 
 inline float MuLawExpand(float x, float mu = 255.0f) {
@@ -85,8 +85,19 @@ inline float MuLawExpand(float x, float mu = 255.0f) {
     float sign = x >= 0.0f ? 1.0f : -1.0f;
     // pow(1+mu, abs_x) = exp(abs_x * log(1+mu))
     // For mu=64: log(65) = 4.17438..
-    float log_1_plus_mu = (mu == 64.0f) ? 4.17438726989f : std::log(1.0f + mu);
-    return sign * (std::exp(abs_x * log_1_plus_mu) - 1.0f) / mu;
+    float log_1_plus_mu = (mu == 64.0f) ? 4.17438726989f : logf(1.0f + mu);
+    return sign * (expf(abs_x * log_1_plus_mu) - 1.0f) / mu;
+}
+
+// Fast approximation of pow(base, exponent) for base in [0, 1].
+// Uses IEEE 754 float bit manipulation (~3-5 cycles on M7).
+// Accurate to within ~5% for typical steepness values 1-8.
+inline float FastPowUnit(float base, float exponent) {
+    union { float f; int32_t i; } v;
+    v.f = base;
+    v.i = static_cast<int32_t>(exponent * static_cast<float>(v.i - 1065353216) + 1065353216.0f);
+    if (v.f < 0.0f) v.f = 0.0f;
+    return v.f;
 }
 
 } // namespace beads

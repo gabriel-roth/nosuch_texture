@@ -314,7 +314,7 @@ static void calculateRequirements(_NT_algorithmRequirements& req, const int32_t*
     // effective duration: HiFi 4s, Clouds 8s, Tape 16s, LoFi 32s at 48kHz)
     auto memReq = beads::BeadsProcessor::GetMemoryRequirements((float)NT_globals.sampleRate);
     req.dram = (uint32_t)memReq.total_bytes;
-    req.dtc = 0;
+    req.dtc = (uint32_t)memReq.dtc_bytes;
     req.itc = 0;
 }
 
@@ -325,8 +325,9 @@ static _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs,
     alg->parameters = parameters;
     alg->parameterPages = &parameterPages;
 
-    // Initialize the beads processor with DRAM
-    alg->processor.Init(ptrs.dram, req.dram, (float)NT_globals.sampleRate);
+    // Initialize the beads processor with DRAM + DTC
+    alg->processor.Init(ptrs.dram, req.dram, (float)NT_globals.sampleRate,
+                         ptrs.dtc, req.dtc);
 
     // Initialize cached params to defaults
     alg->cachedParams = beads::BeadsParameters{};
@@ -941,7 +942,7 @@ static int parameterString(_NT_algorithm* self, int p, int value, char* buff) {
             strcpy(buff, "None");
             return 4;
         } else {
-            _NT_sclInfo info;
+            _NT_sclInfo info = {};
             NT_getSclInfo((uint32_t)(value - 1), info);
             if (info.name) {
                 strncpy(buff, info.name, kNT_parameterStringSize);

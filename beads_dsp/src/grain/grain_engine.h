@@ -26,6 +26,9 @@ public:
 
     int ActiveGrainCount() const;
 
+    // Set DTC cache pointer (nullptr to disable DTC reads)
+    void SetDTCCache(GrainDTCCache* cache) { dtc_cache_ = cache; }
+
     // Scale quantization
     void LoadScale(const double* ratios, uint32_t num_notes) { pitch_quantizer_.loadRatios(ratios, num_notes); }
     void ClearScale() { pitch_quantizer_.clear(); }
@@ -50,6 +53,9 @@ private:
 
     // Tape mode wow/flutter pitch modulation (ratio, 1.0 = none)
     float pitch_mod_ratio_ = 1.0f;
+
+    // DTC pre-fetch cache (nullptr if DTC not available)
+    GrainDTCCache* dtc_cache_ = nullptr;
 
     // Allocate a grain from the pool (returns nullptr if full after stealing)
     Grain* AllocateGrain();

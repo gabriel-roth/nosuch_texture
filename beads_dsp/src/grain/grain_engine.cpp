@@ -79,7 +79,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     float df_f = static_cast<float>(df);
     float min_dur = 0.01f;   // 10ms
     float max_dur = static_cast<float>(buffer_->size()) * df_f / sample_rate_;
-    float duration = min_dur * std::pow(max_dur / min_dur, abs_size);
+    float duration = min_dur * std::exp2(abs_size * (logf(max_dur / min_dur) * 1.4426950408889634f));
     gp.size = duration * sample_rate_;
 
     // --- TIME → buffer read position ---
@@ -174,8 +174,8 @@ void GrainEngine::Process(const BeadsParameters& params,
     float abs_size = std::fabs(params.size);
     abs_size = Clamp(abs_size, 0.0f, 0.999f);
     float min_dur = 0.01f;
-    float grain_dur = min_dur * std::pow(buf_dur / min_dur, abs_size);
-    int max_active = static_cast<int>(buf_dur / grain_dur * 2.0f);
+    float grain_dur = min_dur * std::exp2(abs_size * (logf(buf_dur / min_dur) * 1.4426950408889634f));
+    int max_active = static_cast<int>(buf_dur / grain_dur * 1.5f);
     max_active = std::max(max_active, 2);
     max_active = std::min(max_active, kMaxGrains);
 
@@ -186,6 +186,8 @@ void GrainEngine::Process(const BeadsParameters& params,
         if (active_before >= max_active) break;
         Grain* g = AllocateGrain();
         if (g) {
+            // Adaptive interpolation: use cheaper linear when under load
+            g->set_use_linear(active_before >= kMaxGrains / 2);
             auto gp = ComputeGrainParams(params, trigger_samples[t]);
             g->Start(gp);
             ++active_before;
@@ -208,7 +210,27 @@ void GrainEngine::Process(const BeadsParameters& params,
         if (!grains_[g].active()) continue;
         ++active_count;
 
-        grains_[g].ProcessBlock(*buffer_, buf_size_f, output, num_frames);
+        if (dtc_cache_) {
+            // Pre-fetch the buffer region this grain will read into DTC
+            bool cached = dtc_cache_->Prefetch(
+                *buffer_, grains_[g].read_position(),
+                grains_[g].phase_increment(),
+                static_cast<int>(num_frames),
+                grains_[g].pre_delay_remaining());
+            if (cached) {
+                // num_frames may be 0 when the grain is entirely in
+                // pre-delay.  ProcessBlockCached still needs to run so
+                // the pre_delay counter is decremented; it never reads
+                // from the cache during pre-delay samples.
+                grains_[g].ProcessBlockCached(*dtc_cache_, buf_size_f,
+                                              output, num_frames);
+            } else {
+                // Cache overflow: fall back to direct DRAM reads
+                grains_[g].ProcessBlock(*buffer_, buf_size_f, output, num_frames);
+            }
+        } else {
+            grains_[g].ProcessBlock(*buffer_, buf_size_f, output, num_frames);
+        }
     }
 
     // --- Overlap normalization (matches Clouds approach) ---

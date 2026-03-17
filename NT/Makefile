@@ -20,7 +20,7 @@ ifeq ($(TARGET),hardware)
                -mfpu=fpv5-d16 \
                -mfloat-abi=hard \
                -mthumb \
-               -Os \
+               -O2 \
                -Wall \
                -fPIC \
                -fno-rtti \
@@ -35,7 +35,7 @@ ifeq ($(TARGET),hardware)
              -mfpu=fpv5-d16 \
              -mfloat-abi=hard \
              -mthumb \
-             -Os \
+             -O2 \
              -Wall \
              -fPIC \
              -ffunction-sections \

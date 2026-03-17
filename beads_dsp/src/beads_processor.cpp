@@ -24,14 +24,20 @@ BeadsProcessor::MemoryRequirements BeadsProcessor::GetMemoryRequirements(float s
         (kDefaultBufferFrames + kInterpolationTail) * 2 * sizeof(float);
     size_t reverb_bytes = kReverbBufferSize * sizeof(float);
 
-    // Add alignment padding so Init() can align the base pointer internally
-    // even if the caller provides unaligned memory.
+    // DRAM always includes reverb as fallback (when DTC not available)
     req.total_bytes = (kImplAlignment - 1) + impl_bytes + AlignUp(recording_bytes) + AlignUp(reverb_bytes);
+    // DTC: grain pre-fetch cache + reverb delay lines
+    req.dtc_bytes = AlignUp(sizeof(GrainDTCCache)) + AlignUp(reverb_bytes);
     req.alignment = kImplAlignment;
     return req;
 }
 
 void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
+    Init(memory, memory_size, sample_rate, nullptr, 0);
+}
+
+void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate,
+                           void* dtc_memory, size_t dtc_size) {
     if (!memory || memory_size == 0) return;
 
     // Verify the caller provided enough memory.
@@ -59,9 +65,29 @@ void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
     impl_->recording_buffer.Init(reinterpret_cast<float*>(ptr), kDefaultBufferFrames, 2);
     ptr += AlignUp(recording_bytes);
 
+    // --- DTC memory layout: [GrainDTCCache] [Reverb buffer] ---
+    bool use_dtc = (dtc_memory != nullptr && dtc_size >= req.dtc_bytes);
+    GrainDTCCache* dtc_cache = nullptr;
+    float* reverb_buffer = nullptr;
+
+    if (use_dtc) {
+        uint8_t* dtc_ptr = reinterpret_cast<uint8_t*>(dtc_memory);
+
+        // Grain DTC cache at start of DTC
+        dtc_cache = reinterpret_cast<GrainDTCCache*>(dtc_ptr);
+        dtc_cache->num_frames = 0;
+        dtc_ptr += AlignUp(sizeof(GrainDTCCache));
+
+        // Reverb buffer in DTC (single-cycle access)
+        reverb_buffer = reinterpret_cast<float*>(dtc_ptr);
+    } else {
+        // Fallback: reverb in DRAM
+        reverb_buffer = reinterpret_cast<float*>(ptr);
+        ptr += AlignUp(kReverbBufferSize * sizeof(float));
+    }
+
     // Allocate reverb delay memory
-    impl_->reverb.Init(reinterpret_cast<float*>(ptr), kReverbBufferSize, sample_rate);
-    ptr += AlignUp(kReverbBufferSize * sizeof(float));
+    impl_->reverb.Init(reverb_buffer, kReverbBufferSize, sample_rate);
 
     // Set initial decimation factor (HiFi = 1x, no change from current behavior)
     impl_->recording_buffer.SetDecimationFactor(
@@ -69,6 +95,7 @@ void BeadsProcessor::Init(void* memory, size_t memory_size, float sample_rate) {
 
     // Initialize sub-processors
     impl_->grain_engine.Init(sample_rate, &impl_->recording_buffer);
+    impl_->grain_engine.SetDTCCache(dtc_cache);
     impl_->delay_engine.Init(sample_rate, &impl_->recording_buffer);
     impl_->saturation.Init();
     impl_->quality_processor.Init(sample_rate);

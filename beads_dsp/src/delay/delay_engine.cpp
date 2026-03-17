@@ -63,8 +63,8 @@ void DelayEngine::Process(const BeadsParameters& params,
     // Exponential mapping: density_for_delay 0 = min delay, 1 = max delay
     float ratio = max_delay_samples / std::max(min_delay_samples, 1.0f);
     if (ratio < 1.0f) ratio = 1.0f;
-    float k = std::log(ratio);
-    float base_delay = min_delay_samples * std::exp(k * density_for_delay);
+    float k = logf(ratio);
+    float base_delay = min_delay_samples * expf(k * density_for_delay);
     base_delay = Clamp(base_delay, min_delay_samples, max_delay_samples);
 
     // ---------------------------------------------------------------
@@ -77,7 +77,7 @@ void DelayEngine::Process(const BeadsParameters& params,
     float max_multiplier = max_delay_samples / std::max(base_delay, 1.0f);
     max_multiplier = std::max(max_multiplier, 1.0f);
     // Exponential sweep from 1x to max_multiplier
-    float multiplier = std::pow(max_multiplier, params.time);
+    float multiplier = std::exp2(params.time * (logf(max_multiplier) * 1.4426950408889634f));
     delay_time_target_ = base_delay * multiplier;
     delay_time_target_ = Clamp(delay_time_target_, 1.0f, max_delay_samples);
 
@@ -246,7 +246,7 @@ void DelayEngine::Process(const BeadsParameters& params,
 
             // Read from buffer with Hermite interpolation
             float left, right;
-            buffer_->ReadHermiteStereo(head_pos, &left, &right);
+            buffer_->ReadHermiteStereoFast(head_pos, &left, &right);
 
             pitched_sample.l += left * tri_env;
             pitched_sample.r += right * tri_env;
@@ -281,7 +281,7 @@ void DelayEngine::Process(const BeadsParameters& params,
                 while (mirror_pos < 0.0f) mirror_pos += buffer_size;
             }
             float mirror_l, mirror_r;
-            buffer_->ReadHermiteStereo(mirror_pos, &mirror_l, &mirror_r);
+            buffer_->ReadHermiteStereoFast(mirror_pos, &mirror_l, &mirror_r);
             // Blend: at read_position_=0, 100% mirror; at xfade boundary, 100% primary
             pitched_sample.l = pitched_sample.l * loop_xfade_gain + mirror_l * (1.0f - loop_xfade_gain);
             pitched_sample.r = pitched_sample.r * loop_xfade_gain + mirror_r * (1.0f - loop_xfade_gain);
@@ -323,7 +323,7 @@ void DelayEngine::Process(const BeadsParameters& params,
             }
 
             float sec_l, sec_r;
-            buffer_->ReadHermiteStereo(secondary_pos, &sec_l, &sec_r);
+            buffer_->ReadHermiteStereoFast(secondary_pos, &sec_l, &sec_r);
 
             // Mix both taps with equal gain
             float primary_gain = 1.0f - secondary_mix * 0.5f;
@@ -364,7 +364,7 @@ void DelayEngine::Process(const BeadsParameters& params,
                 // smooth edges).  The raised-cosine pulse: take the sine
                 // envelope and apply a power curve to steepen it.
                 float steepness = 1.0f + slicer_blend * 7.0f;
-                float steep_env = std::pow(sine_env, steepness);
+                float steep_env = FastPowUnit(sine_env, steepness);
                 // Normalize so the peak stays at 1.0
                 // (pow(1.0, n) == 1.0, pow(0.0, n) == 0.0, so extremes are fine)
                 env_gain = steep_env;
