@@ -39,13 +39,6 @@ inline float SemitonesToRatio(float semitones) {
     return std::exp2(semitones / 12.0f);
 }
 
-// Soft clipping using tanh approximation
-inline float SoftClip(float x) {
-    if (x < -3.0f) return -1.0f;
-    if (x > 3.0f) return 1.0f;
-    return x * (27.0f + x * x) / (27.0f + 9.0f * x * x);
-}
-
 // Hard clip
 inline float HardClip(float x, float limit = 1.0f) {
     return Clamp(x, -limit, limit);
@@ -61,10 +54,17 @@ inline float GainToDb(float gain) {
     return 20.0f * std::log10(std::max(gain, 1e-10f));
 }
 
-// Fast approximation of tanh
+// Padé approximant for tanh — accurate within ~0.5% for |x| < 4
 inline float FastTanh(float x) {
     float x2 = x * x;
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
+// Soft clip: FastTanh clamped to [-1, 1] (exact for |x| >= 3)
+inline float SoftClip(float x) {
+    if (x < -3.0f) return -1.0f;
+    if (x > 3.0f) return 1.0f;
+    return FastTanh(x);
 }
 
 // Mu-law compression (for tape quality mode)

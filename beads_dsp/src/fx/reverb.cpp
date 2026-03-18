@@ -77,13 +77,6 @@ void Reverb::SetLpCutoff(float cutoff) {
 
 void Reverb::Process(float left_in, float right_in,
                      float* left_out, float* right_out) {
-    // Fast path: reverb fully off
-    if (amount_ <= 0.0f) {
-        *left_out = left_in;
-        *right_out = right_in;
-        return;
-    }
-
     // Map decay knob (0-1) to feedback gain.
     // Non-linear: slow ramp then steep near 1.0 for long tails.
     float fb = 0.2f + decay_ * 0.75f;
