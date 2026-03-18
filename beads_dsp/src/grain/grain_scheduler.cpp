@@ -143,7 +143,7 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
             // Measure period between clock edges.
             if (clock_period_ > 0.0f) {
                 // Smooth the period estimate.
-                ONE_POLE(clock_period_,
+                OnePole(clock_period_,
                          static_cast<float>(samples_since_clock_), 0.5f);
             } else {
                 clock_period_ = static_cast<float>(samples_since_clock_);

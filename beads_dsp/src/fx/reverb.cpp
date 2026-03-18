@@ -148,11 +148,11 @@ void Reverb::Process(float left_in, float right_in,
     float al2_out = ProcessAllpass(ap_l2_, al1_out, ap_coeff);
 
     // One-pole LP in feedback path (frequency-dependent decay)
-    ONE_POLE(lp_state_l_, al2_out, lp_coeff);
+    OnePole(lp_state_l_, al2_out, lp_coeff);
 
     // DC blocker: subtract slowly-tracked DC estimate to prevent
     // low-frequency buildup at high decay settings.
-    ONE_POLE(dc_estimate_l_, lp_state_l_, dc_block_coeff_);
+    OnePole(dc_estimate_l_, lp_state_l_, dc_block_coeff_);
     float tank_l_dc_blocked = lp_state_l_ - dc_estimate_l_;
 
     // Feedback delay L2
@@ -177,10 +177,10 @@ void Reverb::Process(float left_in, float right_in,
     float ar2_out = ProcessAllpass(ap_r2_, ar1_out, ap_coeff);
 
     // One-pole LP
-    ONE_POLE(lp_state_r_, ar2_out, lp_coeff);
+    OnePole(lp_state_r_, ar2_out, lp_coeff);
 
     // DC blocker
-    ONE_POLE(dc_estimate_r_, lp_state_r_, dc_block_coeff_);
+    OnePole(dc_estimate_r_, lp_state_r_, dc_block_coeff_);
     float tank_r_dc_blocked = lp_state_r_ - dc_estimate_r_;
 
     // Feedback delay R2

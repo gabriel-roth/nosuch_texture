@@ -207,7 +207,7 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
         in = s.quality_processor.ProcessInput(in, s.params.quality_mode);
 
         // 3. Feedback mix (smoothed to prevent zipper noise)
-        ONE_POLE(s.smoothed_feedback, s.params.feedback, 0.002f);
+        OnePole(s.smoothed_feedback, s.params.feedback, 0.002f);
         float feedback_gain = s.smoothed_feedback * s.smoothed_feedback;
         StereoFrame fb = {
             s.feedback_hp_l.ProcessHP(s.feedback_sample.l),
@@ -261,10 +261,10 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
         }
 
         // Advance dry/wet smoothing and compute equal-power gains once per
-        // block.  The ONE_POLE with 0.002 coefficient changes < 0.13% across
+        // block.  The OnePole with 0.002 coefficient changes < 0.13% across
         // 64 samples, so per-block cos/sin is inaudible vs per-sample.
         for (size_t i = 0; i < block; ++i) {
-            ONE_POLE(s.smoothed_dry_wet, s.params.dry_wet, 0.002f);
+            OnePole(s.smoothed_dry_wet, s.params.dry_wet, 0.002f);
         }
         float dw_phase = s.smoothed_dry_wet * 0.25f;
         float dry_gain = CosLookup(dw_phase);

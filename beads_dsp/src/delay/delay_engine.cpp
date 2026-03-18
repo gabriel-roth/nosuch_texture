@@ -166,8 +166,8 @@ void DelayEngine::Process(const BeadsParameters& params,
     // ---------------------------------------------------------------
     for (size_t i = 0; i < num_frames; ++i) {
         // Smooth delay time and secondary mix changes
-        ONE_POLE(smoothed_delay_time_, delay_time_target_, 0.001f);
-        ONE_POLE(smoothed_secondary_mix_, secondary_mix_target, 0.002f);
+        OnePole(smoothed_delay_time_, delay_time_target_, 0.001f);
+        OnePole(smoothed_secondary_mix_, secondary_mix_target, 0.002f);
 
         float current_delay = smoothed_delay_time_;
         float secondary_mix = smoothed_secondary_mix_;
@@ -373,7 +373,7 @@ void DelayEngine::Process(const BeadsParameters& params,
 
         // Smooth the envelope gain to catch any remaining abrupt transitions
         // (e.g. when shape parameter itself changes suddenly)
-        ONE_POLE(smoothed_envelope_gain_, env_gain, 0.05f);
+        OnePole(smoothed_envelope_gain_, env_gain, 0.05f);
 
         mixed_sample.l *= smoothed_envelope_gain_;
         mixed_sample.r *= smoothed_envelope_gain_;

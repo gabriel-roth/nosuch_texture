@@ -167,44 +167,11 @@ public:
         // Zero-crossing kill: detect sign change on mono sum
         // (handles hard-panned content better than L-only).
         if (pending_kill_) {
-            float mono = out_l_val + out_r_val;
-            if (fallback_fade_) {
-                // Short fallback fade when no zero crossing found.
-                float fade = static_cast<float>(fallback_counter_)
-                           * kFallbackFadeInv;
-                out_l_val *= fade;
-                out_r_val *= fade;
-                fallback_counter_--;
-                if (fallback_counter_ < 0) {
-                    active_ = false;
-                    pending_kill_ = false;
-                    fallback_fade_ = false;
-                    *out_l = 0.0f;
-                    *out_r = 0.0f;
-                    prev_mono_ = 0.0f;
-                    return false;
-                }
-            } else {
-                // Check for zero crossing (sign change) with minimum
-                // amplitude to avoid killing on silence.
-                bool crossed = (prev_mono_ > 1e-5f && mono <= 0.0f) ||
-                               (prev_mono_ < -1e-5f && mono >= 0.0f);
-                if (crossed) {
-                    active_ = false;
-                    pending_kill_ = false;
-                    *out_l = 0.0f;
-                    *out_r = 0.0f;
-                    prev_mono_ = 0.0f;
-                    return false;
-                }
-                kill_deadline_--;
-                if (kill_deadline_ <= 0) {
-                    // No crossing found — start short fallback fade.
-                    fallback_fade_ = true;
-                    fallback_counter_ = kFallbackFadeSamples;
-                }
+            if (ApplyPendingKill(out_l_val, out_r_val)) {
+                *out_l = 0.0f;
+                *out_r = 0.0f;
+                return false;
             }
-            prev_mono_ = mono;
         } else {
             prev_mono_ = out_l_val + out_r_val;
         }
@@ -225,10 +192,10 @@ public:
             output[i].r += gr;
         }
         // One-time NaN guard per grain per block instead of per sample.
-        // If the grain produced NaN, zero the contribution and kill the grain.
-        if (!std::isfinite(output[0].l + output[num_frames - 1].l +
-                           output[0].r + output[num_frames - 1].r)) {
-            // Scan and zero any non-finite samples
+        // Sum all frames — NaN in any frame poisons the accumulator.
+        float nan_check = 0.0f;
+        for (size_t i = 0; i < num_frames; ++i) nan_check += output[i].l + output[i].r;
+        if (!std::isfinite(nan_check)) {
             for (size_t i = 0; i < num_frames; ++i) {
                 if (!std::isfinite(output[i].l)) output[i].l = 0.0f;
                 if (!std::isfinite(output[i].r)) output[i].r = 0.0f;
@@ -277,34 +244,7 @@ public:
             float out_r_val = sample_r * env * gain_ * pan_r_;
 
             if (pending_kill_) {
-                float mono = out_l_val + out_r_val;
-                if (fallback_fade_) {
-                    float fade = static_cast<float>(fallback_counter_)
-                               * kFallbackFadeInv;
-                    out_l_val *= fade;
-                    out_r_val *= fade;
-                    if (--fallback_counter_ < 0) {
-                        active_ = false;
-                        pending_kill_ = false;
-                        fallback_fade_ = false;
-                        prev_mono_ = 0.0f;
-                        break;
-                    }
-                } else {
-                    bool crossed = (prev_mono_ > 1e-5f && mono <= 0.0f) ||
-                                   (prev_mono_ < -1e-5f && mono >= 0.0f);
-                    if (crossed) {
-                        active_ = false;
-                        pending_kill_ = false;
-                        prev_mono_ = 0.0f;
-                        break;
-                    }
-                    if (--kill_deadline_ <= 0) {
-                        fallback_fade_ = true;
-                        fallback_counter_ = kFallbackFadeSamples;
-                    }
-                }
-                prev_mono_ = mono;
+                if (ApplyPendingKill(out_l_val, out_r_val)) break;
             } else {
                 prev_mono_ = out_l_val + out_r_val;
             }
@@ -313,9 +253,10 @@ public:
             output[i].r += out_r_val;
         }
 
-        // NaN guard
-        if (!std::isfinite(output[0].l + output[num_frames - 1].l +
-                           output[0].r + output[num_frames - 1].r)) {
+        // NaN guard — sum all frames so a mid-block NaN poisons the accumulator.
+        float nan_check = 0.0f;
+        for (size_t i = 0; i < num_frames; ++i) nan_check += output[i].l + output[i].r;
+        if (!std::isfinite(nan_check)) {
             for (size_t i = 0; i < num_frames; ++i) {
                 if (!std::isfinite(output[i].l)) output[i].l = 0.0f;
                 if (!std::isfinite(output[i].r)) output[i].r = 0.0f;
@@ -372,6 +313,41 @@ private:
 
     // Pre-delay counter
     int pre_delay_ = 0;
+
+    // Apply one sample of pending-kill logic. Modifies out_l/out_r in-place
+    // (applies fade if in fallback mode). Returns true if the grain was killed
+    // this sample (caller should output 0 and stop processing the grain).
+    // INLINED — called per-sample in both hot loop paths.
+    inline bool ApplyPendingKill(float& out_l, float& out_r) {
+        float mono = out_l + out_r;
+        if (fallback_fade_) {
+            float fade = static_cast<float>(fallback_counter_) * kFallbackFadeInv;
+            out_l *= fade;
+            out_r *= fade;
+            if (--fallback_counter_ < 0) {
+                active_ = false;
+                pending_kill_ = false;
+                fallback_fade_ = false;
+                prev_mono_ = 0.0f;
+                return true;
+            }
+        } else {
+            bool crossed = (prev_mono_ > 1e-5f && mono <= 0.0f) ||
+                           (prev_mono_ < -1e-5f && mono >= 0.0f);
+            if (crossed) {
+                active_ = false;
+                pending_kill_ = false;
+                prev_mono_ = 0.0f;
+                return true;
+            }
+            if (--kill_deadline_ <= 0) {
+                fallback_fade_ = true;
+                fallback_counter_ = kFallbackFadeSamples;
+            }
+        }
+        prev_mono_ = mono;
+        return false;
+    }
 
     // Compute envelope value from phase using precomputed smoothness/slope.
     // INLINED — called per-sample per-grain in the hot loop.

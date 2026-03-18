@@ -10,10 +10,10 @@ namespace beads {
 static constexpr float kPi = 3.14159265358979323846f;
 static constexpr float kTwoPi = 2.0f * kPi;
 
-// One-pole low-pass filter macro
-// state += coefficient * (input - state)
-#define ONE_POLE(state, input, coefficient) \
-    state += (coefficient) * ((input) - (state))
+// One-pole low-pass filter: state += coefficient * (input - state)
+inline void OnePole(float& state, float input, float coefficient) {
+    state += coefficient * (input - state);
+}
 
 inline float Clamp(float value, float min_val, float max_val) {
     return std::min(std::max(value, min_val), max_val);

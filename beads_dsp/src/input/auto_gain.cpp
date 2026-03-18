@@ -57,9 +57,9 @@ StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db, bool auto
 
     // Envelope follower: fast attack, moderate release
     if (peak > envelope_) {
-        ONE_POLE(envelope_, peak, attack_coeff_);
+        OnePole(envelope_, peak, attack_coeff_);
     } else {
-        ONE_POLE(envelope_, peak, release_coeff_);
+        OnePole(envelope_, peak, release_coeff_);
     }
 
     if (!auto_gain_on) {
@@ -70,7 +70,7 @@ StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db, bool auto
             last_gain_db_ = gain_db;
             target_gain_ = FastDbToGain(gain_db);
         }
-        ONE_POLE(gain_, target_gain_, 0.0001f);
+        OnePole(gain_, target_gain_, 0.0001f);
         return input * gain_;
     }
 
@@ -83,7 +83,7 @@ StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db, bool auto
             last_gain_db_ = gain_db;
             target_gain_ = FastDbToGain(gain_db);
         }
-        ONE_POLE(gain_, target_gain_, 0.001f);
+        OnePole(gain_, target_gain_, 0.001f);
 
         calibration_counter_--;
         if (calibration_counter_ <= 0) {
@@ -93,11 +93,11 @@ StereoFrame AutoGain::Process(StereoFrame input, float manual_gain_db, bool auto
         }
     } else if (state_ == State::kLocked) {
         // Smoothly hold locked gain — ignore envelope changes
-        ONE_POLE(gain_, locked_gain_, 0.01f);
+        OnePole(gain_, locked_gain_, 0.01f);
     } else {
         // State::kDisabled but auto_gain_on — first enable, start calibrating
         StartCalibration();
-        ONE_POLE(gain_, target_gain_, 0.001f);
+        OnePole(gain_, target_gain_, 0.001f);
     }
 
     return input * gain_;

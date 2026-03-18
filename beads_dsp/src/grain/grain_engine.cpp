@@ -7,6 +7,9 @@
 
 namespace beads {
 
+// log2(e) = 1/ln(2): converts natural log to log2 for exp2() calls.
+static const float kLog2E = 1.4426950408889634f;
+
 void GrainEngine::Init(float sample_rate, RecordingBuffer* buffer) {
     sample_rate_ = sample_rate;
     buffer_ = buffer;
@@ -79,7 +82,7 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     float df_f = static_cast<float>(df);
     float min_dur = 0.01f;   // 10ms
     float max_dur = static_cast<float>(buffer_->size()) * df_f / sample_rate_;
-    float duration = min_dur * std::exp2(abs_size * (logf(max_dur / min_dur) * 1.4426950408889634f));
+    float duration = min_dur * std::exp2(abs_size * (logf(max_dur / min_dur) * kLog2E));
     gp.size = duration * sample_rate_;
 
     // --- TIME → buffer read position ---
@@ -174,7 +177,7 @@ void GrainEngine::Process(const BeadsParameters& params,
     float abs_size = std::fabs(params.size);
     abs_size = Clamp(abs_size, 0.0f, 0.999f);
     float min_dur = 0.01f;
-    float grain_dur = min_dur * std::exp2(abs_size * (logf(buf_dur / min_dur) * 1.4426950408889634f));
+    float grain_dur = min_dur * std::exp2(abs_size * (logf(buf_dur / min_dur) * kLog2E));
     int max_active = static_cast<int>(buf_dur / grain_dur * 1.5f);
     max_active = std::max(max_active, 2);
     max_active = std::min(max_active, kMaxGrains);
@@ -240,7 +243,7 @@ void GrainEngine::Process(const BeadsParameters& params,
     float count_f = static_cast<float>(active_count);
     float slope_coeff = (count_f > overlap_count_lp_) ? 0.9f : 0.2f;
     for (size_t i = 0; i < num_frames; ++i) {
-        ONE_POLE(overlap_count_lp_, count_f, slope_coeff);
+        OnePole(overlap_count_lp_, count_f, slope_coeff);
     }
 
     // 1/sqrt(n-1) for n > 2, unity gain for 1-2 grains.
@@ -250,7 +253,7 @@ void GrainEngine::Process(const BeadsParameters& params,
 
     // Per-sample smooth the gain itself to avoid clicks on sudden changes.
     for (size_t i = 0; i < num_frames; ++i) {
-        ONE_POLE(gain_normalization_, gain_norm, 0.01f);
+        OnePole(gain_normalization_, gain_norm, 0.01f);
         output[i].l *= gain_normalization_;
         output[i].r *= gain_normalization_;
     }
