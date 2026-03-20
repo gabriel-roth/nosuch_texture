@@ -51,8 +51,8 @@ enum class TriggerMode : uint8_t {
     kMidi = 3
 };
 
-// Maximum number of simultaneous grains
-static constexpr int kMaxGrains = 20;
+// Maximum number of simultaneous grains (matches hardware; lower if memory is tight)
+static constexpr int kMaxGrains = 64;
 
 // Recording buffer size in frames (fixed memory budget).
 // 4 seconds at 48kHz; at 96kHz the same frame count gives 2 seconds.

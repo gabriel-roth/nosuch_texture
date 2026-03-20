@@ -175,14 +175,19 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
     for (size_t i = 0; i < num_frames; ++i) {
         StereoFrame in = input[i];
 
-        // Check for wavetable mode activation (silence detection)
-        // Uses a smooth fade to avoid clicks on wavetable transitions
-        bool wt_wants_active = s.wavetable_osc.ShouldActivate(&in, 1);
+        // Wavetable mode: driven by host parameter, not silence detection.
+        // Uses a smooth fade to avoid clicks on transitions.
+        // Apply pitch lock to the oscillator pitch (no AR here, so quantize directly).
+        float wt_pitch = s.params.pitch;
+        if (s.params.pitch_cv_connected) wt_pitch += s.params.pitch_cv;
+        if (s.params.pitch_lock != 0) wt_pitch = QuantizePitchLock(wt_pitch, s.params.pitch_lock);
+
+        bool wt_wants_active = s.params.wavetable_mode;
         if (wt_wants_active) {
             // Fade wavetable in
             s.wavetable_fade = std::min(s.wavetable_fade + wt_fade_inc, 1.0f);
             StereoFrame wt_out;
-            s.wavetable_osc.Process(s.params.pitch, s.params.feedback, &wt_out, 1);
+            s.wavetable_osc.Process(wt_pitch, s.params.feedback, &wt_out, 1);
             // Crossfade between input and wavetable
             in.l = in.l * (1.0f - s.wavetable_fade) + wt_out.l * s.wavetable_fade;
             in.r = in.r * (1.0f - s.wavetable_fade) + wt_out.r * s.wavetable_fade;
@@ -191,7 +196,7 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
                 // Fade wavetable out before deactivating
                 s.wavetable_fade = std::max(s.wavetable_fade - wt_fade_inc, 0.0f);
                 StereoFrame wt_out;
-                s.wavetable_osc.Process(s.params.pitch, s.params.feedback, &wt_out, 1);
+                s.wavetable_osc.Process(wt_pitch, s.params.feedback, &wt_out, 1);
                 in.l = in.l * (1.0f - s.wavetable_fade) + wt_out.l * s.wavetable_fade;
                 in.r = in.r * (1.0f - s.wavetable_fade) + wt_out.r * s.wavetable_fade;
                 if (s.wavetable_fade <= 0.0f) {
@@ -199,6 +204,11 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
                 }
             }
         }
+
+        // Save oscillator-blended frame (before auto-gain) for the dry output
+        // path.  The output section uses this instead of the raw VCV input so
+        // that DRY/WET toward dry passes the wavetable signal, not silence.
+        if (i < kMaxBlockSize) s.dry_input_buf[i] = in;
 
         // 1. Auto-gain
         in = s.auto_gain.Process(in, s.params.manual_gain_db, s.params.auto_gain);
@@ -316,7 +326,10 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
             }
 
             // 8. Dry/wet crossfade (equal-power, gains precomputed per block)
-            StereoFrame in_frame = input[offset + i];
+            // Use the oscillator-blended frame saved in the input loop so
+            // that wavetable mode audio appears on the dry path, not silence.
+            size_t dry_idx = offset + i < kMaxBlockSize ? offset + i : kMaxBlockSize - 1;
+            StereoFrame in_frame = s.dry_input_buf[dry_idx];
             StereoFrame mixed = {
                 in_frame.l * dry_gain + wet_frame.l * wet_gain,
                 in_frame.r * dry_gain + wet_frame.r * wet_gain
@@ -341,7 +354,7 @@ bool BeadsProcessor::IsDelayMode() const {
 }
 
 bool BeadsProcessor::IsWavetableMode() const {
-    return impl_ ? impl_->wavetable_osc.IsActive() : false;
+    return impl_ ? impl_->wavetable_fade > 0.0f : false;
 }
 
 int BeadsProcessor::ActiveGrainCount() const {

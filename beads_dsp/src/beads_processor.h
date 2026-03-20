@@ -68,6 +68,11 @@ struct BeadsProcessor::Impl {
     // overflowing the audio-thread stack on constrained targets (e.g. NT).
     StereoFrame wet_buf[kMaxBlockSize];
     StereoFrame wet_alt_buf[kMaxBlockSize];
+    // Oscillator-blended input (before auto-gain) for dry/wet mix output.
+    // In wavetable mode the raw input is silence, so the dry path must use
+    // the blended signal instead.  Sized to kMaxBlockSize; callers must not
+    // pass num_frames > kMaxBlockSize (VCV uses 1, MetaModule uses ≤ 64).
+    StereoFrame dry_input_buf[kMaxBlockSize];
 
     static constexpr size_t kAlignment = 16;
 };

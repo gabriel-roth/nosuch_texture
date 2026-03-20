@@ -52,6 +52,30 @@ struct BeadsParameters {
 
     // Mode overrides
     bool delay_mode = false;     // true = use delay engine regardless of SIZE
+    bool wavetable_mode = false; // true = oscillator feeds the recording buffer
+
+    // Pitch lock quantization (applied as the final step after AR and CV)
+    // 0 = off, 1 = octaves only, 2 = octaves + perfect 5ths
+    int pitch_lock = 0;
 };
+
+// Quantize semitones to the nearest allowed value for pitch_lock mode.
+// Applied after all modulation so it is always the last word on pitch.
+inline float QuantizePitchLock(float semitones, int mode) {
+    if (mode == 1) {
+        return std::round(semitones / 12.f) * 12.f;
+    } else if (mode == 2) {
+        float base = std::floor(semitones / 12.f) * 12.f;
+        float candidates[] = { base, base + 7.f, base + 12.f, base + 19.f };
+        float nearest = candidates[0];
+        float minDist = std::fabs(semitones - candidates[0]);
+        for (float c : candidates) {
+            float d = std::fabs(semitones - c);
+            if (d < minDist) { minDist = d; nearest = c; }
+        }
+        return nearest;
+    }
+    return semitones;
+}
 
 } // namespace beads

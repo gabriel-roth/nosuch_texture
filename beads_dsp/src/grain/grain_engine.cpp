@@ -100,6 +100,9 @@ Grain::GrainParameters GrainEngine::ComputeGrainParams(
     mod_pitch += params.midi_pitch_offset;
     // Quantize pitch to scale degrees (convert semitones <-> V/oct)
     mod_pitch = pitch_quantizer_.quantize(mod_pitch / 12.0f) * 12.0f;
+    // Pitch lock is the final constraint — applied after AR and scale quantizer
+    if (params.pitch_lock != 0)
+        mod_pitch = QuantizePitchLock(mod_pitch, params.pitch_lock);
     gp.pitch_ratio = SemitonesToRatio(mod_pitch) * pitch_mod_ratio_ / df_f;
     if (reverse) {
         gp.pitch_ratio = -gp.pitch_ratio;
