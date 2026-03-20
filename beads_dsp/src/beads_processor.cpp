@@ -129,7 +129,7 @@ void BeadsProcessor::SetParameters(const BeadsParameters& params) {
         impl_->quality_xfade_counter = Impl::kQualityXfadeSamples;
     }
 
-    bool new_delay_mode = (params.size >= 1.0f);
+    bool new_delay_mode = params.delay_mode;
     if (new_delay_mode != impl_->delay_mode) {
         impl_->prev_delay_mode = impl_->delay_mode;
         impl_->delay_mode = new_delay_mode;

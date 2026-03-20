@@ -49,6 +49,9 @@ struct BeadsParameters {
     float manual_gain_db = NAN;  // NaN = auto-gain
     bool auto_gain = true;       // true = calibrate-and-lock auto-gain
     bool stereo_input = true;
+
+    // Mode overrides
+    bool delay_mode = false;     // true = use delay engine regardless of SIZE
 };
 
 } // namespace beads
