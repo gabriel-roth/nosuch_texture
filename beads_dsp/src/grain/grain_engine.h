@@ -25,6 +25,7 @@ public:
     void SetPitchModulation(float ratio) { pitch_mod_ratio_ = ratio; }
 
     int ActiveGrainCount() const;
+    bool GrainTriggeredThisBlock() const { return scheduler_.GrainTriggeredThisBlock(); }
 
     // Set DTC cache pointer (nullptr to disable DTC reads)
     void SetDTCCache(GrainDTCCache* cache) { dtc_cache_ = cache; }

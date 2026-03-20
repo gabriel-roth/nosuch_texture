@@ -11,6 +11,8 @@ struct BeadsParameters {
     float shape = 0.5f;
     float pitch = 0.0f;       // Semitones, -24 to +24
     float density = 0.5f;
+    float density_cv = 0.0f;
+    bool  density_cv_connected = false;
 
     // Mix controls (0-1)
     float feedback = 0.0f;

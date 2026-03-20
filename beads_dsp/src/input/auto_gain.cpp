@@ -37,8 +37,8 @@ void AutoGain::Init(float sample_rate) {
     // ~500ms release for calibration measurement
     release_coeff_ = 1.0f - std::exp(-1.0f / (0.5f * sample_rate_));
 
-    // ~1 second calibration window
-    calibration_samples_ = static_cast<int>(sample_rate_);
+    // ~2 second calibration window
+    calibration_samples_ = static_cast<int>(2.0f * sample_rate_);
 }
 
 void AutoGain::StartCalibration() {

@@ -38,11 +38,17 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
     switch (params.trigger_mode) {
     case TriggerMode::kLatched: {
         // Internal phasor mode.
-        float rate = DensityToRate(params.density);
+        // Draw initial modulated density; re-draw after each trigger.
+        auto mod_density = [&]() {
+            return Clamp(params.density + params.density_cv, 0.0f, 1.0f);
+        };
+
+        float eff_density = mod_density();
+        float rate = DensityToRate(eff_density);
         if (rate <= 0.0f) break;
 
         float phase_inc = rate / sample_rate_;
-        bool use_random = (params.density > 0.5f);
+        bool use_random = (eff_density > 0.5f);
 
         for (size_t i = 0; i < block_size && trigger_count < max_triggers; ++i) {
             latched_phase_ += phase_inc;
@@ -51,19 +57,13 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
                 latched_phase_ -= 1.0f;
                 trigger_samples[trigger_count++] = static_cast<int>(i);
 
+                // Draw new modulated density for next grain interval.
+                eff_density = mod_density();
+                rate = DensityToRate(eff_density);
+                phase_inc = rate / sample_rate_;
+                use_random = (eff_density > 0.5f);
+
                 if (use_random) {
-                    // For density > 0.5, use exponential distribution to
-                    // randomize the interval.  Set the phasor so the next
-                    // wrap happens after a random interval whose *average*
-                    // equals the deterministic period (1 / rate).
-                    //
-                    // NextExponential() returns -ln(U) with mean 1.0.
-                    // We want the next trigger after (1/rate) * random_factor
-                    // samples on average.  Expressing that in phase units:
-                    // phase_remaining = phase_inc * (1/rate) * exp_random
-                    //                 = 1.0 * exp_random
-                    // So we set latched_phase_ = 1.0 - exp_random, clamped
-                    // so it stays in a reasonable range (don't wait forever).
                     float exp_rand = random_.NextExponential();
                     latched_phase_ = Clamp(1.0f - exp_rand, -2.0f, 0.99f);
                 }
@@ -87,10 +87,11 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
         }
 
         if (gate && params.density != 0.5f) {
-            if (params.density > 0.5f) {
+            float eff_density = Clamp(params.density + params.density_cv, 0.0f, 1.0f);
+            if (eff_density > 0.5f) {
                 // CW from noon: repeat while gate is held.
                 // Higher density → higher repeat rate.
-                float repeat_rate = DensityToRate(params.density);
+                float repeat_rate = DensityToRate(eff_density);
                 if (repeat_rate > 0.0f) {
                     float phase_inc = repeat_rate / sample_rate_;
                     // Skip the first trigger if we already emitted one on
@@ -108,10 +109,10 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
                         }
                     }
                 }
-            } else if (rising_edge && params.density < 0.5f) {
+            } else if (rising_edge && eff_density < 0.5f) {
                 // CCW from noon: burst of grains at gate start.
                 // Lower density → more grains in the burst.
-                float burst_amount = (0.5f - params.density) * 2.0f;  // 0..1
+                float burst_amount = (0.5f - eff_density) * 2.0f;  // 0..1
                 int burst_count = static_cast<int>(burst_amount * 15.0f);  // up to 15 extra
                 // Spread the burst across the block.
                 for (int b = 0; b < burst_count && trigger_count < max_triggers; ++b) {
@@ -150,10 +151,11 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
             }
             samples_since_clock_ = 0;
 
-            if (params.density < 0.5f) {
+            float eff_density = Clamp(params.density + params.density_cv, 0.0f, 1.0f);
+            if (eff_density < 0.5f) {
                 // CCW from noon: clock division.
                 // Map 0.0 → /16, 0.5 → /1
-                float div_amount = (0.5f - params.density) * 2.0f;  // 0..1
+                float div_amount = (0.5f - eff_density) * 2.0f;  // 0..1
                 // Exponential mapping to division ratios: 1, 2, 4, 8, 16
                 int division = 1 << static_cast<int>(div_amount * 4.0f);
                 division = std::min(division, 16);
@@ -175,10 +177,10 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
                 // at 0) triggers for division=1 but is delayed by one for
                 // division>=2.  This matches typical clock divider behavior
                 // where the first output aligns with the Nth input clock.
-            } else if (params.density > 0.5f) {
+            } else if (eff_density > 0.5f) {
                 // CW from noon: probability trigger.
                 // Map 0.5 → 0%, 1.0 → 100%
-                float probability = (params.density - 0.5f) * 2.0f;
+                float probability = (eff_density - 0.5f) * 2.0f;
                 if (random_.NextFloat() < probability) {
                     if (trigger_count < max_triggers) {
                         trigger_samples[trigger_count++] = 0;
@@ -214,8 +216,9 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
         }
 
         if (gate && params.density != 0.5f) {
-            if (params.density > 0.5f) {
-                float repeat_rate = DensityToRate(params.density);
+            float eff_density = Clamp(params.density + params.density_cv, 0.0f, 1.0f);
+            if (eff_density > 0.5f) {
+                float repeat_rate = DensityToRate(eff_density);
                 if (repeat_rate > 0.0f) {
                     float phase_inc = repeat_rate / sample_rate_;
                     bool skip_first = rising_edge;
@@ -231,8 +234,8 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
                         }
                     }
                 }
-            } else if (rising_edge && params.density < 0.5f) {
-                float burst_amount = (0.5f - params.density) * 2.0f;
+            } else if (rising_edge && eff_density < 0.5f) {
+                float burst_amount = (0.5f - eff_density) * 2.0f;
                 int burst_count = static_cast<int>(burst_amount * 15.0f);
                 for (int b = 0; b < burst_count && trigger_count < max_triggers; ++b) {
                     int offset = static_cast<int>(
@@ -249,6 +252,7 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
 
     scheduler_done:
 
+    grain_triggered_ = (trigger_count > 0);
     return trigger_count;
 }
 

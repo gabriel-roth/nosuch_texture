@@ -348,6 +348,10 @@ int BeadsProcessor::ActiveGrainCount() const {
     return impl_ ? impl_->grain_engine.ActiveGrainCount() : 0;
 }
 
+bool BeadsProcessor::GrainTriggeredThisBlock() const {
+    return impl_ ? impl_->grain_engine.GrainTriggeredThisBlock() : false;
+}
+
 float BeadsProcessor::InputLevel() const {
     return impl_ ? impl_->auto_gain.InputLevel() : 0.0f;
 }

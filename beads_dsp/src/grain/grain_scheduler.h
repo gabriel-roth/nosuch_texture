@@ -18,6 +18,8 @@ public:
     int Process(const BeadsParameters& params, size_t block_size,
                 int* trigger_samples, int max_triggers);
 
+    bool GrainTriggeredThisBlock() const { return grain_triggered_; }
+
 private:
     float sample_rate_ = 48000.0f;
 
@@ -34,6 +36,7 @@ private:
     uint32_t samples_since_clock_ = 0;
 
     Random random_;
+    bool grain_triggered_ = false;
 
     // Convert density parameter to trigger rate (Hz).
     // density is 0-1 where 0.5 = silence.

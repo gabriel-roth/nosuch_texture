@@ -43,6 +43,7 @@ public:
     bool IsDelayMode() const;
     bool IsWavetableMode() const;
     int ActiveGrainCount() const;
+    bool GrainTriggeredThisBlock() const;
     float InputLevel() const;
     void TriggerAutoGainCalibration();
 
