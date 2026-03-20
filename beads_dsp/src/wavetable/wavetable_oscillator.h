@@ -12,8 +12,9 @@ public:
 
     // Process one block of audio output.
     // pitch_semitones: V/Oct pitch in semitones (0 = middle C)
-    // bank_select: 0-1, selects waveform bank and interpolates between entries
-    void Process(float pitch_semitones, float bank_select,
+    // bank: 0-1, selects which bank (FEEDBACK knob)
+    // wave: 0-1, selects waveform within bank (TIME knob)
+    void Process(float pitch_semitones, float bank, float wave,
                  StereoFrame* output, size_t num_frames);
 
     // Silence detector - returns true if input has been silent long enough

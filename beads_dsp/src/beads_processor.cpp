@@ -182,12 +182,19 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
         if (s.params.pitch_cv_connected) wt_pitch += s.params.pitch_cv;
         if (s.params.pitch_lock != 0) wt_pitch = QuantizePitchLock(wt_pitch, s.params.pitch_lock);
 
+        // FEEDBACK selects wavetable bank (0-1 across 24 banks).
+        // TIME scrubs waveform within the bank; add TIME CV if connected.
+        float wt_bank = s.params.feedback;
+        float wt_wave = s.params.time;
+        if (s.params.time_cv_connected)
+            wt_wave = std::max(0.0f, std::min(1.0f, wt_wave + s.params.time_cv));
+
         bool wt_wants_active = s.params.wavetable_mode;
         if (wt_wants_active) {
             // Fade wavetable in
             s.wavetable_fade = std::min(s.wavetable_fade + wt_fade_inc, 1.0f);
             StereoFrame wt_out;
-            s.wavetable_osc.Process(wt_pitch, s.params.feedback, &wt_out, 1);
+            s.wavetable_osc.Process(wt_pitch, wt_bank, wt_wave, &wt_out, 1);
             // Crossfade between input and wavetable
             in.l = in.l * (1.0f - s.wavetable_fade) + wt_out.l * s.wavetable_fade;
             in.r = in.r * (1.0f - s.wavetable_fade) + wt_out.r * s.wavetable_fade;
@@ -196,7 +203,7 @@ void BeadsProcessor::Process(const StereoFrame* input, StereoFrame* output,
                 // Fade wavetable out before deactivating
                 s.wavetable_fade = std::max(s.wavetable_fade - wt_fade_inc, 0.0f);
                 StereoFrame wt_out;
-                s.wavetable_osc.Process(wt_pitch, s.params.feedback, &wt_out, 1);
+                s.wavetable_osc.Process(wt_pitch, wt_bank, wt_wave, &wt_out, 1);
                 in.l = in.l * (1.0f - s.wavetable_fade) + wt_out.l * s.wavetable_fade;
                 in.r = in.r * (1.0f - s.wavetable_fade) + wt_out.r * s.wavetable_fade;
                 if (s.wavetable_fade <= 0.0f) {
