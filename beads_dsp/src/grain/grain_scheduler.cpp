@@ -73,56 +73,43 @@ int GrainScheduler::Process(const BeadsParameters& params, size_t block_size,
     }
 
     case TriggerMode::kGated: {
+        // Gate high: generate grains at density-controlled rate (same phasor
+        // as kLatched). Gate low: pause grain generation.
         bool gate = params.gate;
-        bool rising_edge = gate && !prev_gate_;
 
-        if (rising_edge) {
-            // Always trigger on rising edge.
-            if (trigger_count < max_triggers) {
-                trigger_samples[trigger_count++] = 0;
-            }
+        if (gate) {
+            auto mod_density = [&]() {
+                return Clamp(params.density + params.density_cv, 0.0f, 1.0f);
+            };
 
-            // Reset gate-phase for repetition tracking.
-            gate_phase_ = 0.0f;
-        }
+            float eff_density = mod_density();
+            float rate = DensityToRate(eff_density);
+            if (rate <= 0.0f) break;
 
-        if (gate && params.density != 0.5f) {
-            float eff_density = Clamp(params.density + params.density_cv, 0.0f, 1.0f);
-            if (eff_density > 0.5f) {
-                // CW from noon: repeat while gate is held.
-                // Higher density → higher repeat rate.
-                float repeat_rate = DensityToRate(eff_density);
-                if (repeat_rate > 0.0f) {
-                    float phase_inc = repeat_rate / sample_rate_;
-                    // Skip the first trigger if we already emitted one on
-                    // the rising edge.
-                    bool skip_first = rising_edge;
-                    for (size_t i = 0; i < block_size && trigger_count < max_triggers; ++i) {
-                        gate_phase_ += phase_inc;
-                        if (gate_phase_ >= 1.0f) {
-                            gate_phase_ -= 1.0f;
-                            if (skip_first) {
-                                skip_first = false;
-                            } else {
-                                trigger_samples[trigger_count++] = static_cast<int>(i);
-                            }
-                        }
+            float phase_inc = rate / sample_rate_;
+            bool use_random = (eff_density > 0.5f);
+
+            for (size_t i = 0; i < block_size && trigger_count < max_triggers; ++i) {
+                latched_phase_ += phase_inc;
+
+                if (latched_phase_ >= 1.0f) {
+                    latched_phase_ -= 1.0f;
+                    trigger_samples[trigger_count++] = static_cast<int>(i);
+
+                    eff_density = mod_density();
+                    rate = DensityToRate(eff_density);
+                    phase_inc = rate / sample_rate_;
+                    use_random = (eff_density > 0.5f);
+
+                    if (use_random) {
+                        float exp_rand = random_.NextExponential();
+                        latched_phase_ = Clamp(1.0f - exp_rand, -2.0f, 0.99f);
                     }
                 }
-            } else if (rising_edge && eff_density < 0.5f) {
-                // CCW from noon: burst of grains at gate start.
-                // Lower density → more grains in the burst.
-                float burst_amount = (0.5f - eff_density) * 2.0f;  // 0..1
-                int burst_count = static_cast<int>(burst_amount * 15.0f);  // up to 15 extra
-                // Spread the burst across the block.
-                for (int b = 0; b < burst_count && trigger_count < max_triggers; ++b) {
-                    int offset = static_cast<int>(
-                        (static_cast<float>(b + 1) / static_cast<float>(burst_count + 1))
-                        * static_cast<float>(block_size));
-                    offset = std::min(offset, static_cast<int>(block_size) - 1);
-                    trigger_samples[trigger_count++] = offset;
-                }
             }
+        } else {
+            // Gate low: reset phase so next gate-high starts firing immediately.
+            latched_phase_ = 0.0f;
         }
 
         prev_gate_ = gate;
